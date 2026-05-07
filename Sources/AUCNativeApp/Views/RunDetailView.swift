@@ -82,15 +82,21 @@ struct RunDetailView: View {
                         model.activeTaskID = nil
                     } label: {
                         Label("New", systemImage: "plus")
+                            .lineLimit(1)
+                            .fixedSize(horizontal: true, vertical: false)
                     }
                     .buttonStyle(SecondaryButtonStyle())
+                    .frame(minWidth: 92)
 
                     Button {
                         model.startFollowUp()
                     } label: {
                         Label("Follow up", systemImage: "paperplane")
+                            .lineLimit(1)
+                            .fixedSize(horizontal: true, vertical: false)
                     }
                     .buttonStyle(PrimaryButtonStyle())
+                    .frame(minWidth: 124)
 
                     Button {
                         Task { await model.cancelActiveTask() }
@@ -101,6 +107,8 @@ struct RunDetailView: View {
                     .disabled(task.status.isTerminal)
                     .help("Stop task")
                 }
+                .fixedSize(horizontal: true, vertical: false)
+                .layoutPriority(1)
             }
 
             if let current = task.currentAction, !current.isEmpty {
