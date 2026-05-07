@@ -5,26 +5,27 @@ struct MainWindowView: View {
     @Bindable var model: AUCAppModel
 
     var body: some View {
-        GeometryReader { geometry in
-            let sidebarWidth = Self.sidebarWidth(for: geometry.size.width)
-            let activePanelWidth = Self.activePanelWidth(for: geometry.size.width)
+        ZStack {
+            AUCDesign.ColorToken.appBackground.ignoresSafeArea()
 
-            ZStack {
-                AUCDesign.ColorToken.appBackground.ignoresSafeArea()
+            HStack(spacing: 0) {
+                SidebarView(model: model)
+                    .frame(width: AUCDesign.Space.sidebarWidth)
 
-                HStack(spacing: 0) {
-                    SidebarView(model: model)
-                        .frame(width: sidebarWidth)
+                CommandCenterView(model: model)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
 
-                    CommandCenterView(model: model)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-
-                    if activePanelWidth > 0 {
-                        ActiveTaskView(model: model)
-                            .frame(width: activePanelWidth)
-                    }
-                }
+                ActiveTaskView(model: model)
+                    .frame(width: AUCDesign.Space.activePanelWidth)
             }
+
+            VStack {
+                Spacer()
+                LauncherPill(model: model)
+                    .padding(.bottom, AUCDesign.Space.lg)
+            }
+            .padding(.leading, AUCDesign.Space.sidebarWidth)
+            .padding(.trailing, AUCDesign.Space.activePanelWidth)
         }
         .foregroundStyle(AUCDesign.ColorToken.textPrimary)
         .font(AUCDesign.FontToken.sans(size: 14))
@@ -34,12 +35,66 @@ struct MainWindowView: View {
                 .presentationBackground(.ultraThinMaterial)
         }
     }
+}
 
-    private static func sidebarWidth(for windowWidth: CGFloat) -> CGFloat {
-        windowWidth < 980 ? 220 : AUCDesign.Space.sidebarWidth
-    }
+private struct LauncherPill: View {
+    @Bindable var model: AUCAppModel
 
-    private static func activePanelWidth(for windowWidth: CGFloat) -> CGFloat {
-        windowWidth >= 1360 ? AUCDesign.Space.activePanelWidth : 0
+    var body: some View {
+        Button {
+            model.isLauncherPresented = true
+        } label: {
+            HStack(spacing: AUCDesign.Space.sm) {
+                if let task = model.activeTask {
+                    StatusDot(status: task.status)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(task.displayTitle)
+                            .font(AUCDesign.FontToken.sans(size: 13, weight: .semibold))
+                            .lineLimit(1)
+                        Text(task.currentAction ?? "Open task pill")
+                            .font(AUCDesign.FontToken.sans(size: 11, weight: .medium))
+                            .foregroundStyle(AUCDesign.ColorToken.textSecondary)
+                            .lineLimit(1)
+                    }
+                } else {
+                    Image(systemName: "magnifyingglass")
+                        .foregroundStyle(AUCDesign.ColorToken.textTertiary)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Launcher")
+                            .font(AUCDesign.FontToken.sans(size: 13, weight: .semibold))
+                            .foregroundStyle(AUCDesign.ColorToken.textPrimary)
+                        Text("Search tasks or start a new one")
+                            .font(AUCDesign.FontToken.sans(size: 12, weight: .medium))
+                            .foregroundStyle(AUCDesign.ColorToken.textSecondary)
+                    }
+                    Spacer()
+                    Text("⌘K")
+                        .font(AUCDesign.FontToken.sans(size: 11, weight: .bold))
+                        .foregroundStyle(AUCDesign.ColorToken.textSecondary)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 5)
+                        .background(AUCDesign.ColorToken.panelStrong)
+                        .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                    Image(systemName: "plus")
+                        .font(AUCDesign.FontToken.sans(size: 13, weight: .bold))
+                        .frame(width: 30, height: 30)
+                        .background(AUCDesign.ColorToken.violet)
+                        .foregroundStyle(.white)
+                        .clipShape(Circle())
+                }
+            }
+            .frame(width: model.activeTask == nil ? AUCDesign.Space.launcherPillWidth : AUCDesign.Space.launcherPillActiveWidth)
+            .padding(.leading, AUCDesign.Space.md)
+            .padding(.trailing, model.activeTask == nil ? AUCDesign.Space.xs : AUCDesign.Space.md)
+            .padding(.vertical, model.activeTask == nil ? 9 : 12)
+            .background(AUCDesign.ColorToken.void.opacity(0.98))
+            .clipShape(Capsule())
+            .overlay {
+                Capsule()
+                    .stroke(AUCDesign.ColorToken.strokeStrong, lineWidth: 1)
+            }
+            .aucShadow(AUCDesign.Shadow.aucGlow)
+        }
+        .buttonStyle(.plain)
     }
 }
