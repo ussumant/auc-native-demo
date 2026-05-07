@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 
 public struct ExecutorPaths: Equatable, Sendable {
@@ -112,15 +113,20 @@ public actor ExecutorProcessManager {
         guard let nodeBinary = paths.nodeBinary else {
             throw ExecutorProcessError.nodeBinaryMissing
         }
-        if fileManager.fileExists(atPath: Self.socketPath(for: paths.dataDir)) {
-            return
+        let socketPath = Self.socketPath(for: paths.dataDir)
+        if fileManager.fileExists(atPath: socketPath) {
+            if Self.canConnect(toSocketPath: socketPath) {
+                return
+            }
+            try? fileManager.removeItem(atPath: socketPath)
+            try? fileManager.removeItem(at: paths.dataDir.appendingPathComponent("daemon.pid"))
         }
         if let process, process.isRunning {
             return
         }
 
         let process = Process()
-        var arguments = [daemonEntry.path, "--data-dir", paths.dataDir.path, "--socket-path", Self.socketPath(for: paths.dataDir)]
+        var arguments = [daemonEntry.path, "--data-dir", paths.dataDir.path, "--socket-path", socketPath]
         var environment = ProcessInfo.processInfo.environment
         if paths.repoRoot == nil {
             let resourcesPath = daemonEntry
@@ -165,6 +171,31 @@ public actor ExecutorProcessManager {
 
     public static func socketPath(for dataDir: URL) -> String {
         dataDir.appendingPathComponent("daemon.sock").path
+    }
+
+    private static func canConnect(toSocketPath socketPath: String) -> Bool {
+        let fd = socket(AF_UNIX, SOCK_STREAM, 0)
+        guard fd >= 0 else { return false }
+        defer { Darwin.close(fd) }
+
+        var address = sockaddr_un()
+        address.sun_family = sa_family_t(AF_UNIX)
+        let maxPathLength = MemoryLayout.size(ofValue: address.sun_path)
+        guard socketPath.utf8.count < maxPathLength else { return false }
+
+        _ = withUnsafeMutablePointer(to: &address.sun_path) { pointer in
+            pointer.withMemoryRebound(to: CChar.self, capacity: maxPathLength) { charPointer in
+                socketPath.withCString { source in
+                    strncpy(charPointer, source, maxPathLength)
+                }
+            }
+        }
+
+        return withUnsafePointer(to: &address) { pointer in
+            pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) { sockaddrPointer in
+                Darwin.connect(fd, sockaddrPointer, socklen_t(MemoryLayout<sockaddr_un>.size)) == 0
+            }
+        }
     }
 }
 
