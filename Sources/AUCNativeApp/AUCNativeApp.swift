@@ -6,7 +6,6 @@ import AppKit
 
 @main
 struct AUCNativeApp: App {
-    @Environment(\.openWindow) private var openWindow
     @State private var appModel = AUCAppModel()
     @State private var processManager = ExecutorProcessManager()
     @State private var launcherPanel = LauncherPanelController()
@@ -19,9 +18,9 @@ struct AUCNativeApp: App {
     }
 
     var body: some Scene {
-        WindowGroup("AUC Native", id: "dashboard") {
+        WindowGroup {
             MainWindowView(model: appModel)
-                .frame(minWidth: 860, minHeight: 560)
+                .frame(minWidth: 1100, minHeight: 720)
                 .onAppear {
                     #if canImport(AppKit)
                     NSApp.setActivationPolicy(.regular)
@@ -41,14 +40,8 @@ struct AUCNativeApp: App {
                 }
         }
         .windowStyle(.hiddenTitleBar)
-        .defaultSize(width: 1320, height: 820)
         .commands {
             CommandGroup(after: .newItem) {
-                Button("Open Dashboard") {
-                    openDashboard()
-                }
-                .keyboardShortcut("0", modifiers: [.command])
-
                 Button("Open Launcher") {
                     launcherPanel.toggle(model: appModel)
                 }
@@ -62,9 +55,6 @@ struct AUCNativeApp: App {
         }
 
         MenuBarExtra("AUC", systemImage: "sparkle.magnifyingglass") {
-            Button("Open Dashboard") {
-                openDashboard()
-            }
             Button("Open Launcher") {
                 launcherPanel.toggle(model: appModel)
             }
@@ -76,19 +66,6 @@ struct AUCNativeApp: App {
                 Task { await bootstrap(force: true) }
             }
         }
-    }
-
-    @MainActor
-    private func openDashboard() {
-        appModel.isLauncherPresented = false
-        launcherPanel.hide()
-        openWindow(id: "dashboard")
-        #if canImport(AppKit)
-        AUCWindowPresenter.openDashboard()
-        DispatchQueue.main.async {
-            AUCWindowPresenter.openDashboard()
-        }
-        #endif
     }
 
     @MainActor

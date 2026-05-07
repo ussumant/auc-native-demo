@@ -79,14 +79,6 @@ final class LauncherPanelController {
                 model?.isLauncherPresented = false
                 self?.hide()
             },
-            openDashboard: { [weak self, weak model] task in
-                if let task {
-                    model?.selectTask(task)
-                }
-                model?.isLauncherPresented = false
-                self?.hide()
-                AUCWindowPresenter.openDashboard()
-            },
             resize: { [weak self, weak model] collapsed in
                 guard let model else { return }
                 self?.resize(for: model, collapsed: collapsed)

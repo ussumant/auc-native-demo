@@ -115,8 +115,8 @@ enum AUCDesign {
         static let launcherDoneHeight: CGFloat = 246
         static let launcherMiniWidth: CGFloat = 430
         static let launcherMiniHeight: CGFloat = 76
-        static let settingsSheetWidth: CGFloat = 620
-        static let settingsSheetHeight: CGFloat = 430
+        static let settingsSheetWidth: CGFloat = 760
+        static let settingsSheetHeight: CGFloat = 560
         static let launcherPillWidth: CGFloat = 620
         static let launcherPillActiveWidth: CGFloat = 500
         static let bottomFadeHeight: CGFloat = 120
