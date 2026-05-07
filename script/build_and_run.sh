@@ -12,8 +12,13 @@ PRODUCT_BIN="$ROOT_DIR/.build/$BUILD_CONFIGURATION/AUCNative"
 EXECUTOR_REPO="${AUC_EXECUTOR_REPO:-$ROOT_DIR/../agent-computer/accomplish}"
 SIGN_IDENTITY="${AUC_SIGN_IDENTITY:--}"
 ICON_SOURCE="${AUC_ICON_SOURCE:-$ROOT_DIR/Assets/AppIcon.icns}"
+PACKAGE_PROFILE="${AUC_PACKAGE_PROFILE:-full}"
 
-echo "Building $APP_NAME..."
+is_demo_slim() {
+  [[ "$PACKAGE_PROFILE" == "demo-slim" ]]
+}
+
+echo "Building $APP_NAME ($PACKAGE_PROFILE profile)..."
 cd "$ROOT_DIR"
 swift build -c "$BUILD_CONFIGURATION"
 
@@ -38,8 +43,10 @@ if [[ -d "$EXECUTOR_REPO/apps/daemon/dist" ]]; then
     )
     if [[ -d "$DEPLOY_DIR/node_modules" ]]; then
       rsync -a --delete "$DEPLOY_DIR/node_modules/" "$RESOURCES_DIR/Executor/daemon/node_modules/"
-      mkdir -p "$RESOURCES_DIR/app.asar.unpacked/node_modules"
-      rsync -a --delete "$DEPLOY_DIR/node_modules/" "$RESOURCES_DIR/app.asar.unpacked/node_modules/"
+      if ! is_demo_slim; then
+        mkdir -p "$RESOURCES_DIR/app.asar.unpacked/node_modules"
+        rsync -a --delete "$DEPLOY_DIR/node_modules/" "$RESOURCES_DIR/app.asar.unpacked/node_modules/"
+      fi
     fi
     rm -rf "$DEPLOY_DIR"
 
@@ -49,15 +56,20 @@ if [[ -d "$EXECUTOR_REPO/apps/daemon/dist" ]]; then
 fi
 
 if [[ -d "$EXECUTOR_REPO/apps/desktop/resources/nodejs" ]]; then
-  mkdir -p "$RESOURCES_DIR/Executor/nodejs"
-  rsync -a --delete "$EXECUTOR_REPO/apps/desktop/resources/nodejs/" "$RESOURCES_DIR/Executor/nodejs/"
   mkdir -p "$RESOURCES_DIR/nodejs"
   rsync -a --delete "$EXECUTOR_REPO/apps/desktop/resources/nodejs/" "$RESOURCES_DIR/nodejs/"
+  if ! is_demo_slim; then
+    mkdir -p "$RESOURCES_DIR/Executor/nodejs"
+    rsync -a --delete "$EXECUTOR_REPO/apps/desktop/resources/nodejs/" "$RESOURCES_DIR/Executor/nodejs/"
+  fi
 fi
 
 if [[ -d "$EXECUTOR_REPO/node_modules/.pnpm/node_modules/opencode-ai" ]]; then
   mkdir -p "$RESOURCES_DIR/app.asar.unpacked/node_modules"
   rsync -aL --delete "$EXECUTOR_REPO/node_modules/.pnpm/node_modules/opencode-ai" "$RESOURCES_DIR/app.asar.unpacked/node_modules/"
+  if is_demo_slim; then
+    rm -f "$RESOURCES_DIR/app.asar.unpacked/node_modules/opencode-ai/bin/.opencode"
+  fi
 fi
 
 if [[ -d "$EXECUTOR_REPO/node_modules/.pnpm/node_modules/opencode-darwin-arm64" ]]; then
@@ -67,7 +79,17 @@ fi
 
 if [[ -d "$EXECUTOR_REPO/packages/agent-core/mcp-tools" ]]; then
   mkdir -p "$RESOURCES_DIR/mcp-tools"
-  rsync -a --delete "$EXECUTOR_REPO/packages/agent-core/mcp-tools/" "$RESOURCES_DIR/mcp-tools/"
+  if is_demo_slim; then
+    rm -rf "$RESOURCES_DIR/mcp-tools"
+    mkdir -p "$RESOURCES_DIR/mcp-tools"
+    for item in package.json package-lock.json request-connector-auth request-google-file-picker start-task complete-task mac-actions dev-browser dev-browser-mcp gmail-mcp calendar-mcp gws-mcp whatsapp safe-file-deletion; do
+      if [[ -e "$EXECUTOR_REPO/packages/agent-core/mcp-tools/$item" ]]; then
+        rsync -a --delete "$EXECUTOR_REPO/packages/agent-core/mcp-tools/$item" "$RESOURCES_DIR/mcp-tools/"
+      fi
+    done
+  else
+    rsync -a --delete "$EXECUTOR_REPO/packages/agent-core/mcp-tools/" "$RESOURCES_DIR/mcp-tools/"
+  fi
 fi
 
 if [[ -d "$EXECUTOR_REPO/bundled-skills" ]]; then
@@ -80,13 +102,21 @@ if [[ -d "$EXECUTOR_REPO/apps/web/public/fonts" ]]; then
   rsync -a --delete "$EXECUTOR_REPO/apps/web/public/fonts/" "$RESOURCES_DIR/fonts/"
 fi
 
-NODE_BIN_DIR="$RESOURCES_DIR/Executor/nodejs/darwin-arm64/node-v24.15.0-darwin-arm64/bin"
+NODE_BIN_DIR="$RESOURCES_DIR/nodejs/darwin-arm64/node-v24.15.0-darwin-arm64/bin"
+if [[ ! -x "$NODE_BIN_DIR/node" ]]; then
+  NODE_BIN_DIR="$RESOURCES_DIR/Executor/nodejs/darwin-arm64/node-v24.15.0-darwin-arm64/bin"
+fi
 if [[ -x "$NODE_BIN_DIR/node" && -x "$NODE_BIN_DIR/npm" && -d "$RESOURCES_DIR/Executor/daemon/node_modules" ]]; then
   echo "Rebuilding daemon native modules for bundled Node..."
   (
     cd "$RESOURCES_DIR/Executor/daemon"
     PATH="$NODE_BIN_DIR:$PATH" npm rebuild better-sqlite3 --build-from-source=true >/dev/null
   )
+fi
+
+if is_demo_slim; then
+  rm -f "$RESOURCES_DIR/Executor/daemon/node_modules/.pnpm/node_modules/@auc/daemon" 2>/dev/null || true
+  find "$RESOURCES_DIR/Executor/daemon" -name '*.map' -type f -delete 2>/dev/null || true
 fi
 
 cat > "$CONTENTS_DIR/Info.plist" <<PLIST

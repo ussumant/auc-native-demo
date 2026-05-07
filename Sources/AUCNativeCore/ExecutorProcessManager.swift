@@ -61,10 +61,12 @@ public actor ExecutorProcessManager {
         }
 
         let resources = bundle.resourceURL
-        let bundledNode = resources?.appendingPathComponent("Executor/nodejs/darwin-arm64/node-v24.15.0-darwin-arm64/bin/node")
+        let bundledNode = [
+            resources?.appendingPathComponent("nodejs/darwin-arm64/node-v24.15.0-darwin-arm64/bin/node"),
+            resources?.appendingPathComponent("Executor/nodejs/darwin-arm64/node-v24.15.0-darwin-arm64/bin/node")
+        ].compactMap { $0 }.first { FileManager.default.fileExists(atPath: $0.path) }
         let bundledEntry = resources?.appendingPathComponent("Executor/daemon/index.js")
         if let bundledNode, let bundledEntry,
-           FileManager.default.fileExists(atPath: bundledNode.path),
            FileManager.default.fileExists(atPath: bundledEntry.path) {
             return ExecutorPaths(
                 repoRoot: nil,
@@ -95,7 +97,10 @@ public actor ExecutorProcessManager {
             )
         }
 
-        let node = resources?.appendingPathComponent("Executor/nodejs/darwin-arm64/node-v24.15.0-darwin-arm64/bin/node")
+        let node = [
+            resources?.appendingPathComponent("nodejs/darwin-arm64/node-v24.15.0-darwin-arm64/bin/node"),
+            resources?.appendingPathComponent("Executor/nodejs/darwin-arm64/node-v24.15.0-darwin-arm64/bin/node")
+        ].compactMap { $0 }.first { FileManager.default.fileExists(atPath: $0.path) }
         let entry = resources?.appendingPathComponent("Executor/daemon/index.js")
         return ExecutorPaths(
             repoRoot: nil,

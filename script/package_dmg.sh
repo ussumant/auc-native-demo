@@ -6,22 +6,31 @@ APP_NAME="AUCNative"
 DISPLAY_NAME="AUC Native"
 VERSION="${AUC_RELEASE_VERSION:-0.1.0-demo}"
 SIGN_IDENTITY="${AUC_SIGN_IDENTITY:-E67DFD7885D1411C9661415A9B2BD17B58FA4506}"
+PACKAGE_PROFILE="${AUC_PACKAGE_PROFILE:-full}"
 DIST_DIR="$ROOT_DIR/dist"
 APP_DIR="$DIST_DIR/$APP_NAME.app"
 DMG_STAGING="$DIST_DIR/$APP_NAME-$VERSION"
 DMG_PATH="$DIST_DIR/$APP_NAME-$VERSION.dmg"
 CHECKSUM_PATH="$DMG_PATH.sha256"
 
+if [[ "$PACKAGE_PROFILE" == "demo-slim" && -z "${AUC_RELEASE_VERSION+x}" ]]; then
+  VERSION="0.1.0-demo-slim-rc1"
+  DMG_STAGING="$DIST_DIR/$APP_NAME-$VERSION"
+  DMG_PATH="$DIST_DIR/$APP_NAME-$VERSION.dmg"
+  CHECKSUM_PATH="$DMG_PATH.sha256"
+fi
+
 cd "$ROOT_DIR"
 
-echo "Building release app bundle..."
+echo "Building release app bundle ($PACKAGE_PROFILE profile)..."
 AUC_BUILD_CONFIGURATION=release \
   AUC_SKIP_LAUNCH=1 \
   AUC_SIGN_IDENTITY="$SIGN_IDENTITY" \
+  AUC_PACKAGE_PROFILE="$PACKAGE_PROFILE" \
   ./script/build_and_run.sh
 
 echo "Verifying app signature..."
-codesign --verify --deep --verbose=2 "$APP_DIR"
+codesign --verify --deep --strict --verbose=2 "$APP_DIR"
 
 echo "Preparing DMG staging..."
 rm -rf "$DMG_STAGING" "$DMG_PATH" "$CHECKSUM_PATH"
