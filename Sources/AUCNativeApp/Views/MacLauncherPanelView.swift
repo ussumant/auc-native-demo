@@ -4,6 +4,7 @@ import SwiftUI
 struct MacLauncherPanelView: View {
     @Bindable var model: AUCAppModel
     let close: () -> Void
+    let openDashboard: (AUCTaskRecord?) -> Void
     let resize: (Bool) -> Void
 
     @State private var userExpandedTerminalTaskID: String?
@@ -241,8 +242,7 @@ struct MacLauncherPanelView: View {
             }
             HStack(spacing: AUCDesign.Space.sm) {
                 Button {
-                    model.selectTask(task)
-                    close()
+                    openDashboard(task)
                 } label: {
                     Label("Open full details", systemImage: "arrow.up.right.square")
                 }
@@ -324,8 +324,7 @@ struct MacLauncherPanelView: View {
 
             HStack(spacing: AUCDesign.Space.sm) {
                 Button {
-                    model.selectTask(task)
-                    close()
+                    openDashboard(task)
                 } label: {
                     Label("Open full details", systemImage: "arrow.up.right.square")
                 }

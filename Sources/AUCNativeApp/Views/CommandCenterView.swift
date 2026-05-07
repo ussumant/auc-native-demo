@@ -31,7 +31,7 @@ struct CommandCenterView: View {
 
             ScrollView {
                 VStack(spacing: AUCDesign.Space.lg) {
-                    Spacer(minLength: 196)
+                    Spacer(minLength: 120)
 
                     Text(model.composer.mode == .newTask ? "What should AUC do?" : "Ask a follow-up")
                         .font(AUCDesign.FontToken.sans(size: 32, weight: .medium))
@@ -308,7 +308,7 @@ private struct ModelIndicator: View {
             Circle()
                 .fill(settings.hasReadyProvider ? AUCDesign.ColorToken.green : AUCDesign.ColorToken.amber)
                 .frame(width: 7, height: 7)
-            Text(settings.selectedModel?.model ?? "Provider setup")
+            Text(settings.hasReadyProvider ? "OpenAI ready" : "Provider setup")
                 .font(AUCDesign.FontToken.sans(size: 12, weight: .semibold))
                 .foregroundStyle(AUCDesign.ColorToken.textSecondary)
                 .lineLimit(1)

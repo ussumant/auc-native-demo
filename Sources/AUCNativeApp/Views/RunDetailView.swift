@@ -35,8 +35,8 @@ struct RunDetailView: View {
                     timelineSection
                     proofSection
                 }
-                .padding(.horizontal, AUCDesign.Space.xl)
-                .padding(.top, 72)
+                .padding(.horizontal, AUCDesign.Space.lg)
+                .padding(.top, 56)
                 .padding(.bottom, 150)
                 .frame(maxWidth: AUCDesign.Space.runDetailMaxWidth)
                 .frame(maxWidth: .infinity)
@@ -74,34 +74,37 @@ struct RunDetailView: View {
                 }
 
                 Spacer(minLength: AUCDesign.Space.md)
-
-                HStack(spacing: AUCDesign.Space.sm) {
-                    Button {
-                        model.composer.mode = .newTask
-                        model.composer.prompt = ""
-                        model.activeTaskID = nil
-                    } label: {
-                        Label("New", systemImage: "plus")
-                    }
-                    .buttonStyle(SecondaryButtonStyle())
-
-                    Button {
-                        model.startFollowUp()
-                    } label: {
-                        Label("Follow up", systemImage: "paperplane")
-                    }
-                    .buttonStyle(PrimaryButtonStyle())
-
-                    Button {
-                        Task { await model.cancelActiveTask() }
-                    } label: {
-                        Image(systemName: "stop")
-                    }
-                    .buttonStyle(IconCircleButtonStyle())
-                    .disabled(task.status.isTerminal)
-                    .help("Stop task")
-                }
             }
+
+            HStack(spacing: AUCDesign.Space.sm) {
+                Button {
+                    model.composer.mode = .newTask
+                    model.composer.prompt = ""
+                    model.activeTaskID = nil
+                } label: {
+                    Label("New", systemImage: "plus")
+                        .lineLimit(1)
+                }
+                .buttonStyle(SecondaryButtonStyle())
+
+                Button {
+                    model.startFollowUp()
+                } label: {
+                    Label("Follow up", systemImage: "paperplane")
+                        .lineLimit(1)
+                }
+                .buttonStyle(PrimaryButtonStyle())
+
+                Button {
+                    Task { await model.cancelActiveTask() }
+                } label: {
+                    Image(systemName: "stop")
+                }
+                .buttonStyle(IconCircleButtonStyle())
+                .disabled(task.status.isTerminal)
+                .help("Stop task")
+            }
+            .fixedSize(horizontal: true, vertical: false)
 
             if let current = task.currentAction, !current.isEmpty {
                 HStack(alignment: .top, spacing: AUCDesign.Space.sm) {

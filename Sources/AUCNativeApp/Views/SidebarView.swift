@@ -23,11 +23,22 @@ struct SidebarView: View {
                     Button {
                         model.isLauncherPresented = true
                     } label: {
-                        Label("Launcher", systemImage: "magnifyingglass")
-                            .frame(maxWidth: .infinity)
+                        HStack(spacing: AUCDesign.Space.sm) {
+                            Image(systemName: "magnifyingglass")
+                            Text("Launcher")
+                            Spacer()
+                            Text("Option+B")
+                                .font(AUCDesign.FontToken.sans(size: 10, weight: .bold))
+                                .foregroundStyle(AUCDesign.ColorToken.textSecondary)
+                                .padding(.horizontal, 7)
+                                .padding(.vertical, 4)
+                                .background(AUCDesign.ColorToken.panelStrong)
+                                .clipShape(Capsule())
+                        }
+                        .frame(maxWidth: .infinity)
                     }
                     .buttonStyle(SecondaryButtonStyle())
-                    .help("Open launcher")
+                    .help("Open launcher with Option-B")
                 }
             }
             .padding(.horizontal, AUCDesign.Space.md)
