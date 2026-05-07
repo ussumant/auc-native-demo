@@ -26,6 +26,7 @@ Watch the current demo here:
    - Tasks will not run until the OpenAI key is saved.
 5. Press **Option+B** to open the Mac launcher.
 6. Type what you want AUC to do and press **Enter**.
+   - To force a fresh task from the launcher, start with `/new-task`.
 
 The launcher opened with **Option+B** is the primary interface for the demo. The
 main window is useful for history and details, but the launcher is the intended
@@ -47,6 +48,9 @@ Expected:
 
 These are good demo prompts to paste into the **Option+B** launcher.
 
+Use `/new-task` at the start of a prompt when you want to reset context and
+start a separate task instead of continuing the active run.
+
 ### 1. Smoke Test
 
 ```text
@@ -54,6 +58,12 @@ Say DMG OK and nothing else.
 ```
 
 Expected result: the task completes and the output says `DMG OK`.
+
+Fresh-task version:
+
+```text
+/new-task Say DMG OK and nothing else.
+```
 
 ### 2. Find And Summarize A PDF
 
@@ -104,7 +114,8 @@ What this shows: a quick Mac automation flow that is easy to verify visually.
 ## Demo Tips
 
 - Use **Option+B** to open the launcher.
-- Use **New task** from the dashboard when you want to reset context.
+- Type `/new-task` in the launcher when you want to reset context.
+- Use **New task** from the dashboard for the same reset from the main window.
 - Use the dashboard to show history, task progress, output, and full run details.
 - Keep the OpenAI key saved in Settings before demoing.
 - If a Mac action is blocked, allow AUC Native in **System Settings → Privacy &
