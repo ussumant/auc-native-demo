@@ -26,6 +26,25 @@ json_escape() {
   printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'
 }
 
+should_developer_sign() {
+  [[ "$SIGN_IDENTITY" == Developer\ ID\ Application:* || "$SIGN_IDENTITY" =~ ^[A-Fa-f0-9]{40}$ ]]
+}
+
+sign_nested_macho() {
+  should_developer_sign || return 0
+  echo "Signing nested native binaries..."
+  while IFS= read -r -d '' file_path; do
+    if file "$file_path" | grep -Eq 'Mach-O|dynamically linked shared library|current ar archive'; then
+      codesign --force --timestamp --options runtime --sign "$SIGN_IDENTITY" "$file_path" >/dev/null 2>&1 || \
+        codesign --force --timestamp --sign "$SIGN_IDENTITY" "$file_path" >/dev/null
+    fi
+  done < <(
+    find "$APP_DIR" -type f \
+      \( -perm -111 -o -name '*.node' -o -name '*.dylib' -o -name '*.so' \) \
+      -print0
+  )
+}
+
 echo "Building $APP_NAME ($PACKAGE_PROFILE profile)..."
 cd "$ROOT_DIR"
 swift build -c "$BUILD_CONFIGURATION"
@@ -174,7 +193,8 @@ cat > "$CONTENTS_DIR/Info.plist" <<PLIST
 PLIST
 
 echo "Signing app bundle..."
-codesign --force --deep --options runtime --sign "$SIGN_IDENTITY" "$APP_DIR" >/dev/null
+sign_nested_macho
+codesign --force --deep --timestamp --options runtime --sign "$SIGN_IDENTITY" "$APP_DIR" >/dev/null
 
 if [[ "${AUC_SKIP_LAUNCH:-0}" == "1" ]]; then
   exit 0

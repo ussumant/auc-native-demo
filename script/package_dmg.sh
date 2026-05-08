@@ -100,10 +100,7 @@ hdiutil create \
   "$DMG_PATH"
 
 echo "Signing DMG..."
-codesign --force --sign "$SIGN_IDENTITY" "$DMG_PATH"
-
-echo "Writing checksum..."
-shasum -a 256 "$DMG_PATH" > "$CHECKSUM_PATH"
+codesign --force --timestamp --sign "$SIGN_IDENTITY" "$DMG_PATH"
 
 if [[ "$PACKAGE_PROFILE" == "openai-demo" ]]; then
   if security find-identity -v -p codesigning | grep -q "Developer ID Application"; then
@@ -121,6 +118,9 @@ if [[ "$PACKAGE_PROFILE" == "openai-demo" ]]; then
     echo "Not notarized: Developer ID Application identity is not installed on this Mac." >&2
   fi
 fi
+
+echo "Writing checksum..."
+shasum -a 256 "$DMG_PATH" > "$CHECKSUM_PATH"
 
 echo "Done:"
 echo "  $DMG_PATH"

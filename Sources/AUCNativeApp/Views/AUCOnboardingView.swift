@@ -70,10 +70,6 @@ struct AUCOnboardingView: View {
             }
             .buttonStyle(PrimaryButtonStyle())
 
-            Text("Inspired by the fast, permission-first feel of Boring Notch.")
-                .font(AUCDesign.FontToken.sans(size: 11, weight: .medium))
-                .foregroundStyle(AUCDesign.ColorToken.textTertiary)
-
             Spacer()
         }
         .padding(AUCDesign.Space.xl)
