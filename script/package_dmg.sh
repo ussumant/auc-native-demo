@@ -5,7 +5,6 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 APP_NAME="AUCNative"
 DISPLAY_NAME="AUC Native"
 VERSION="${AUC_RELEASE_VERSION:-0.1.0-demo}"
-SIGN_IDENTITY="${AUC_SIGN_IDENTITY:-E67DFD7885D1411C9661415A9B2BD17B58FA4506}"
 PACKAGE_PROFILE="${AUC_PACKAGE_PROFILE:-full}"
 DIST_DIR="$ROOT_DIR/dist"
 APP_DIR="$DIST_DIR/$APP_NAME.app"
@@ -13,11 +12,36 @@ DMG_STAGING="$DIST_DIR/$APP_NAME-$VERSION"
 DMG_PATH="$DIST_DIR/$APP_NAME-$VERSION.dmg"
 CHECKSUM_PATH="$DMG_PATH.sha256"
 
+find_developer_id_application() {
+  security find-identity -v -p codesigning 2>/dev/null |
+    sed -n 's/.*"\(Developer ID Application: [^"]*\)".*/\1/p' |
+    head -1
+}
+
+if [[ "$PACKAGE_PROFILE" == "openai-demo" ]]; then
+  VERSION="${AUC_RELEASE_VERSION:-0.1.1-openai-demo}"
+  DMG_STAGING="$DIST_DIR/$APP_NAME-$VERSION"
+  DMG_PATH="$DIST_DIR/$APP_NAME-$VERSION.dmg"
+  CHECKSUM_PATH="$DMG_PATH.sha256"
+fi
+
 if [[ "$PACKAGE_PROFILE" == "demo-slim" && -z "${AUC_RELEASE_VERSION+x}" ]]; then
   VERSION="0.1.0-demo-slim-rc1"
   DMG_STAGING="$DIST_DIR/$APP_NAME-$VERSION"
   DMG_PATH="$DIST_DIR/$APP_NAME-$VERSION.dmg"
   CHECKSUM_PATH="$DMG_PATH.sha256"
+fi
+
+if [[ -n "${AUC_SIGN_IDENTITY:-}" ]]; then
+  SIGN_IDENTITY="$AUC_SIGN_IDENTITY"
+elif [[ "$PACKAGE_PROFILE" == "openai-demo" ]]; then
+  SIGN_IDENTITY="$(find_developer_id_application)"
+  if [[ -z "$SIGN_IDENTITY" ]]; then
+    SIGN_IDENTITY="E67DFD7885D1411C9661415A9B2BD17B58FA4506"
+    echo "Developer ID Application identity not found; building dev-signed candidate only." >&2
+  fi
+else
+  SIGN_IDENTITY="E67DFD7885D1411C9661415A9B2BD17B58FA4506"
 fi
 
 cd "$ROOT_DIR"
@@ -41,7 +65,21 @@ cat > "$DMG_STAGING/README-FIRST.txt" <<'README'
 AUC Native demo build
 =====================
 
-This is a dev-signed demo build, not a notarized public release.
+Install:
+1. Drag "AUC Native.app" to Applications.
+2. Open AUC Native.
+3. Complete onboarding.
+4. Press Option+B to open the launcher and start tasks.
+
+The launcher is the main interface for this demo. Use the full app for history,
+settings, and detailed run output.
+
+If this is the openai-demo build, it is OpenAI-only and uses openai/gpt-5.2.
+If a seeded demo key was packaged, onboarding will show "Demo key active · $5 budget".
+
+Fallback:
+If this candidate does not work, use the previous v0.1.0 demo DMG from the
+GitHub release page.
 
 If macOS blocks first launch on another Mac:
 1. Move "AUC Native.app" to Applications.
@@ -66,6 +104,23 @@ codesign --force --sign "$SIGN_IDENTITY" "$DMG_PATH"
 
 echo "Writing checksum..."
 shasum -a 256 "$DMG_PATH" > "$CHECKSUM_PATH"
+
+if [[ "$PACKAGE_PROFILE" == "openai-demo" ]]; then
+  if security find-identity -v -p codesigning | grep -q "Developer ID Application"; then
+    if [[ "${AUC_NOTARIZE:-0}" == "1" ]]; then
+      echo "Submitting DMG for notarization..."
+      xcrun notarytool submit "$DMG_PATH" --keychain-profile "${AUC_NOTARY_PROFILE:-auc-notary}" --wait
+      echo "Stapling notarization ticket..."
+      xcrun stapler staple "$DMG_PATH"
+      echo "Assessing DMG with Gatekeeper..."
+      spctl --assess --type open --context context:primary-signature --verbose=4 "$DMG_PATH"
+    else
+      echo "Developer ID Application found. Set AUC_NOTARIZE=1 to submit and staple this DMG."
+    fi
+  else
+    echo "Not notarized: Developer ID Application identity is not installed on this Mac." >&2
+  fi
+fi
 
 echo "Done:"
 echo "  $DMG_PATH"

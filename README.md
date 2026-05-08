@@ -153,6 +153,32 @@ This creates `dist/AUCNative-0.1.0-demo.dmg` and a SHA-256 checksum. The demo
 DMG is dev-signed unless `AUC_SIGN_IDENTITY` is set to a Developer ID
 Application identity. See `DEMO_RELEASE.md` for notarization notes.
 
+## OpenAI Demo Candidate
+
+The isolated launcher-first candidate uses a separate branch, tag, and artifact
+so the existing demo DMGs remain a rollback path.
+
+```bash
+AUC_PACKAGE_PROFILE=openai-demo ./script/package_dmg.sh
+```
+
+Optional throwaway seeded key build:
+
+```bash
+AUC_PACKAGE_PROFILE=openai-demo \
+AUC_DEMO_OPENAI_API_KEY="sk-..." \
+./script/package_dmg.sh
+```
+
+This creates `dist/AUCNative-0.1.1-openai-demo.dmg`. The app opens with a
+notch-style onboarding flow, focuses the user on **Option+B**, and simplifies
+setup to OpenAI only. If a seeded demo key is packaged, onboarding shows
+`Demo key active · $5 budget`.
+
+The seeded key is extractable from the app bundle. Use only a throwaway,
+low-budget key and revoke it after review. See `OPENAI_DEMO_RELEASE.md` and
+`THIRD_PARTY_NOTICES.md`.
+
 ## Executor
 
 The app looks for an executor in this order:

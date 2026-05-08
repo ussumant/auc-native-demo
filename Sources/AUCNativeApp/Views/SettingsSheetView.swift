@@ -20,9 +20,61 @@ struct SettingsSheetView: View {
     ]
 
     var body: some View {
+        Group {
+            if model.isOpenAIDemoMode {
+                openAIDemoBody
+            } else {
+                HStack(spacing: 0) {
+                    sidebar
+
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: AUCDesign.Space.md) {
+                            tabContent
+                        }
+                        .padding(AUCDesign.Space.lg)
+                    }
+                    .background(AUCDesign.ColorToken.appBackground)
+                }
+            }
+        }
+        .foregroundStyle(AUCDesign.ColorToken.textPrimary)
+        .onAppear {
+            openAIBaseURL = model.openAIBaseURL.isEmpty ? AUCAppModel.defaultOpenAIBaseURL : model.openAIBaseURL
+            selectedModelID = model.isOpenAIDemoMode ? AUCAppModel.openAIDemoModelID : (model.providerSettings.selectedModel?.model ?? selectedModelID)
+        }
+    }
+
+    private var openAIDemoBody: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: AUCDesign.Space.md) {
+                HStack(alignment: .top, spacing: AUCDesign.Space.md) {
+                    Image(systemName: "sparkle.magnifyingglass")
+                        .font(AUCDesign.FontToken.sans(size: 28, weight: .semibold))
+                        .foregroundStyle(AUCDesign.ColorToken.violetLight)
+                    VStack(alignment: .leading, spacing: AUCDesign.Space.xs) {
+                        Text("OpenAI Demo Setup")
+                            .font(AUCDesign.FontToken.sans(size: 26, weight: .semibold))
+                        Text("AUC starts from the launcher. Press Option+B after setup.")
+                            .font(AUCDesign.FontToken.sans(size: 13, weight: .medium))
+                            .foregroundStyle(AUCDesign.ColorToken.textSecondary)
+                    }
+                    Spacer()
+                    Chip(label: "Option+B", systemImage: "keyboard")
+                }
+                .padding(.bottom, AUCDesign.Space.sm)
+
+                providerPanel
+                generalPanel
+                aboutPanel
+            }
+            .padding(AUCDesign.Space.lg)
+        }
+        .background(AUCDesign.ColorToken.appBackground)
+    }
+
+    private var standardBody: some View {
         HStack(spacing: 0) {
             sidebar
-
             ScrollView {
                 VStack(alignment: .leading, spacing: AUCDesign.Space.md) {
                     tabContent
@@ -30,11 +82,6 @@ struct SettingsSheetView: View {
                 .padding(AUCDesign.Space.lg)
             }
             .background(AUCDesign.ColorToken.appBackground)
-        }
-        .foregroundStyle(AUCDesign.ColorToken.textPrimary)
-        .onAppear {
-            openAIBaseURL = model.openAIBaseURL
-            selectedModelID = model.providerSettings.selectedModel?.model ?? selectedModelID
         }
     }
 
@@ -190,27 +237,43 @@ struct SettingsSheetView: View {
             VStack(alignment: .leading, spacing: AUCDesign.Space.sm) {
                 Text("Model")
                     .font(AUCDesign.FontToken.sans(size: 13, weight: .semibold))
-                Picker("Model", selection: $selectedModelID) {
-                    ForEach(openAIModels, id: \.self) { modelID in
-                        Text(displayName(for: modelID)).tag(modelID)
+                if model.isOpenAIDemoMode {
+                    settingsInlineValue(
+                        value: AUCAppModel.openAIDemoModelID,
+                        systemImage: "lock.fill",
+                        tint: AUCDesign.ColorToken.violetLight
+                    )
+                } else {
+                    Picker("Model", selection: $selectedModelID) {
+                        ForEach(openAIModels, id: \.self) { modelID in
+                            Text(displayName(for: modelID)).tag(modelID)
+                        }
                     }
+                    .pickerStyle(.menu)
                 }
-                .pickerStyle(.menu)
             }
 
-            VStack(alignment: .leading, spacing: AUCDesign.Space.sm) {
-                Text("Base URL")
-                    .font(AUCDesign.FontToken.sans(size: 13, weight: .semibold))
-                TextField("https://api.openai.com/v1", text: $openAIBaseURL)
-                    .textFieldStyle(.plain)
-                    .font(AUCDesign.FontToken.sans(size: 14, weight: .medium))
-                    .padding(.horizontal, AUCDesign.Space.md)
-                    .padding(.vertical, 11)
-                    .background(AUCDesign.ColorToken.panel)
-                    .clipShape(RoundedRectangle(cornerRadius: AUCDesign.Radius.md, style: .continuous))
-                    .overlay {
-                        RoundedRectangle(cornerRadius: AUCDesign.Radius.md, style: .continuous)
-                            .stroke(AUCDesign.ColorToken.stroke, lineWidth: 1)
+            if model.isOpenAIDemoMode {
+                settingsInlineValue(
+                    value: model.isDemoKeyActive ? "Demo key active · $5 budget" : "Manual or seeded demo key",
+                    systemImage: model.isDemoKeyActive ? "checkmark.seal.fill" : "key.fill",
+                    tint: model.isDemoKeyActive ? AUCDesign.ColorToken.green : AUCDesign.ColorToken.amber
+                )
+            } else {
+                VStack(alignment: .leading, spacing: AUCDesign.Space.sm) {
+                    Text("Base URL")
+                        .font(AUCDesign.FontToken.sans(size: 13, weight: .semibold))
+                    TextField("https://api.openai.com/v1", text: $openAIBaseURL)
+                        .textFieldStyle(.plain)
+                        .font(AUCDesign.FontToken.sans(size: 14, weight: .medium))
+                        .padding(.horizontal, AUCDesign.Space.md)
+                        .padding(.vertical, 11)
+                        .background(AUCDesign.ColorToken.panel)
+                        .clipShape(RoundedRectangle(cornerRadius: AUCDesign.Radius.md, style: .continuous))
+                        .overlay {
+                            RoundedRectangle(cornerRadius: AUCDesign.Radius.md, style: .continuous)
+                                .stroke(AUCDesign.ColorToken.stroke, lineWidth: 1)
+                        }
                     }
             }
 
@@ -226,8 +289,8 @@ struct SettingsSheetView: View {
                     Task {
                         await model.saveOpenAIAPIKey(
                             openAIKey,
-                            baseURL: openAIBaseURL,
-                            modelID: selectedModelID
+                            baseURL: model.isOpenAIDemoMode ? AUCAppModel.defaultOpenAIBaseURL : openAIBaseURL,
+                            modelID: model.isOpenAIDemoMode ? AUCAppModel.openAIDemoModelID : selectedModelID
                         )
                         if model.settingsMessage?.contains("saved") == true {
                             openAIKey = ""
@@ -345,6 +408,9 @@ struct SettingsSheetView: View {
     }
 
     private var providerStatusText: String {
+        if model.isDemoKeyActive {
+            return "Demo key active · $5 budget"
+        }
         if model.providerSettings.activeProviderID == "openai", let prefix = model.providerSettings.openAIKeyPrefix {
             return "Connected with \(prefix)"
         }
@@ -352,6 +418,20 @@ struct SettingsSheetView: View {
             return "Provider ready"
         }
         return "Add an OpenAI API key to run tasks"
+    }
+
+    private func settingsInlineValue(value: String, systemImage: String, tint: Color) -> some View {
+        HStack(spacing: AUCDesign.Space.sm) {
+            Image(systemName: systemImage)
+                .foregroundStyle(tint)
+            Text(value)
+                .font(AUCDesign.FontToken.sans(size: 12, weight: .semibold))
+                .foregroundStyle(AUCDesign.ColorToken.textSecondary)
+            Spacer(minLength: 0)
+        }
+        .padding(AUCDesign.Space.sm)
+        .background(AUCDesign.ColorToken.panel)
+        .clipShape(RoundedRectangle(cornerRadius: AUCDesign.Radius.md, style: .continuous))
     }
 
     private func settingsRow(title: String, value: String, systemImage: String, tint: Color) -> some View {

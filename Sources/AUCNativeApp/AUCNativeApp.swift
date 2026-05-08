@@ -12,6 +12,8 @@ struct AUCNativeApp: App {
     @State private var launcherHotKey = LauncherHotKeyController()
     @State private var didBootstrap = false
     @State private var didInstallLauncherHotKey = false
+    @State private var didApplyDemoConfig = false
+    private let demoConfig = AUCDemoReleaseConfig.load()
 
     init() {
         AUCDesign.FontToken.registerBundleFonts()
@@ -26,6 +28,7 @@ struct AUCNativeApp: App {
                     NSApp.setActivationPolicy(.regular)
                     NSApp.activate(ignoringOtherApps: true)
                     #endif
+                    applyDemoConfigOnce()
                     installLauncherHotKeyOnce()
                 }
                 .onChange(of: appModel.isLauncherPresented) { _, isPresented in
@@ -47,6 +50,13 @@ struct AUCNativeApp: App {
                 }
                 .keyboardShortcut("b", modifiers: [.option])
 
+                Button("Open Full App") {
+                    #if canImport(AppKit)
+                    NSApp.activate(ignoringOtherApps: true)
+                    NSApp.windows.first(where: { !($0 is NSPanel) })?.makeKeyAndOrderFront(nil)
+                    #endif
+                }
+
                 Button("Settings") {
                     appModel.isSettingsPresented = true
                 }
@@ -58,14 +68,37 @@ struct AUCNativeApp: App {
             Button("Open Launcher") {
                 launcherPanel.toggle(model: appModel)
             }
+            Button("Open Full App") {
+                #if canImport(AppKit)
+                NSApp.activate(ignoringOtherApps: true)
+                NSApp.windows.first(where: { !($0 is NSPanel) })?.makeKeyAndOrderFront(nil)
+                #endif
+            }
             Button("Settings") {
                 appModel.isSettingsPresented = true
+            }
+            Button("Run Onboarding") {
+                appModel.openOnboarding()
             }
             Divider()
             Button("Reconnect Executor") {
                 Task { await bootstrap(force: true) }
             }
+            Divider()
+            Button("Quit AUC") {
+                #if canImport(AppKit)
+                NSApp.terminate(nil)
+                #endif
+            }
         }
+    }
+
+    @MainActor
+    private func applyDemoConfigOnce() {
+        guard !didApplyDemoConfig else { return }
+        didApplyDemoConfig = true
+        guard demoConfig.isOpenAIDemo else { return }
+        appModel.configureOpenAIDemoMode(seededKeyAvailable: demoConfig.seededOpenAIAPIKey != nil)
     }
 
     @MainActor
@@ -81,6 +114,7 @@ struct AUCNativeApp: App {
     private func bootstrapOnce() async {
         guard !didBootstrap else { return }
         didBootstrap = true
+        applyDemoConfigOnce()
         await bootstrap(force: false)
     }
 
@@ -91,6 +125,7 @@ struct AUCNativeApp: App {
             try await processManager.ensureRunning(paths: paths)
             let socketPath = ExecutorProcessManager.socketPath(for: paths.dataDir)
             await connectWithRetry(socketPath: socketPath)
+            await appModel.applySeededDemoKeyIfNeeded(demoConfig.seededOpenAIAPIKey)
         } catch {
             appModel.isExecutorConnected = false
             appModel.errorMessage = error.localizedDescription
@@ -113,6 +148,7 @@ struct AUCNativeApp: App {
             )
             await appModel.connect()
             if appModel.isExecutorConnected {
+                await appModel.applySeededDemoKeyIfNeeded(demoConfig.seededOpenAIAPIKey)
                 return
             }
             try? await Task.sleep(for: .milliseconds(200))

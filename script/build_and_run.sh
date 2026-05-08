@@ -15,7 +15,15 @@ ICON_SOURCE="${AUC_ICON_SOURCE:-$ROOT_DIR/Assets/AppIcon.icns}"
 PACKAGE_PROFILE="${AUC_PACKAGE_PROFILE:-full}"
 
 is_demo_slim() {
-  [[ "$PACKAGE_PROFILE" == "demo-slim" ]]
+  [[ "$PACKAGE_PROFILE" == "demo-slim" || "$PACKAGE_PROFILE" == "openai-demo" ]]
+}
+
+is_openai_demo() {
+  [[ "$PACKAGE_PROFILE" == "openai-demo" ]]
+}
+
+json_escape() {
+  printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'
 }
 
 echo "Building $APP_NAME ($PACKAGE_PROFILE profile)..."
@@ -28,6 +36,9 @@ mkdir -p "$MACOS_DIR" "$RESOURCES_DIR/Executor"
 cp "$PRODUCT_BIN" "$MACOS_DIR/AUCNative"
 if [[ -f "$ICON_SOURCE" ]]; then
   cp "$ICON_SOURCE" "$RESOURCES_DIR/AppIcon.icns"
+fi
+if is_openai_demo && [[ -f "$ROOT_DIR/Assets/BoringNotch-boring.m4a" ]]; then
+  cp "$ROOT_DIR/Assets/BoringNotch-boring.m4a" "$RESOURCES_DIR/BoringNotch-boring.m4a"
 fi
 
 if [[ -d "$EXECUTOR_REPO/apps/daemon/dist" ]]; then
@@ -117,6 +128,14 @@ fi
 if is_demo_slim; then
   rm -f "$RESOURCES_DIR/Executor/daemon/node_modules/.pnpm/node_modules/@auc/daemon" 2>/dev/null || true
   find "$RESOURCES_DIR/Executor/daemon" -name '*.map' -type f -delete 2>/dev/null || true
+fi
+
+if is_openai_demo; then
+  DEMO_KEY_JSON=""
+  if [[ -n "${AUC_DEMO_OPENAI_API_KEY:-}" ]]; then
+    DEMO_KEY_JSON=",\n  \"seededOpenAIAPIKey\": \"$(json_escape "$AUC_DEMO_OPENAI_API_KEY")\""
+  fi
+  printf '{\n  "profile": "openai-demo",\n  "releaseVersion": "0.1.1-openai-demo"%b\n}\n' "$DEMO_KEY_JSON" > "$RESOURCES_DIR/DemoReleaseConfig.json"
 fi
 
 cat > "$CONTENTS_DIR/Info.plist" <<PLIST

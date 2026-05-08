@@ -205,6 +205,35 @@ struct AppModelTests {
         #expect(!defaults.bool(forKey: AUCAppModel.openAISetupPromptSeenKey))
     }
 
+    @Test func openAIDemoModeShowsOnboardingInsteadOfSettings() async throws {
+        let (suiteName, defaults) = makeIsolatedDefaults()
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let executor = RecordingExecutor()
+        let model = AUCAppModel(executor: executor, userDefaults: defaults)
+        model.configureOpenAIDemoMode(seededKeyAvailable: false)
+
+        await model.connect()
+
+        #expect(model.isOnboardingPresented)
+        #expect(!model.isSettingsPresented)
+        #expect(model.settingsMessage == AUCAppModel.openAISetupMessage)
+    }
+
+    @Test func seededDemoKeySavesOpenAIAndMarksDemoActive() async throws {
+        let executor = RecordingExecutor()
+        let model = AUCAppModel(executor: executor)
+        model.configureOpenAIDemoMode(seededKeyAvailable: true)
+
+        await model.connect()
+        await model.applySeededDemoKeyIfNeeded(" sk-demo-key ")
+
+        #expect(await executor.savedOpenAIKeys == ["sk-demo-key"])
+        #expect(await executor.savedBaseURLs == [AUCAppModel.defaultOpenAIBaseURL])
+        #expect(model.providerSettings.hasReadyProvider)
+        #expect(model.isDemoKeyActive)
+        #expect(model.settingsMessage == "Demo key active · $5 budget")
+    }
+
     @Test func submitComposerWithoutProviderOpensSettingsAndPreservesPrompt() async throws {
         let executor = RecordingExecutor()
         let model = AUCAppModel(executor: executor)

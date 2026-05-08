@@ -34,6 +34,11 @@ struct MainWindowView: View {
                 .frame(width: AUCDesign.Space.settingsSheetWidth, height: AUCDesign.Space.settingsSheetHeight)
                 .presentationBackground(.ultraThinMaterial)
         }
+        .sheet(isPresented: $model.isOnboardingPresented) {
+            AUCOnboardingView(model: model)
+                .frame(width: 430, height: 620)
+                .presentationBackground(.ultraThinMaterial)
+        }
     }
 }
 
@@ -74,6 +79,13 @@ private struct LauncherPill: View {
                         .padding(.horizontal, 8)
                         .padding(.vertical, 5)
                         .background(AUCDesign.ColorToken.panelStrong)
+                        .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                    Text("⌥B")
+                        .font(AUCDesign.FontToken.sans(size: 11, weight: .bold))
+                        .foregroundStyle(AUCDesign.ColorToken.violetLight)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 5)
+                        .background(AUCDesign.ColorToken.violet.opacity(0.14))
                         .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
                     Image(systemName: "plus")
                         .font(AUCDesign.FontToken.sans(size: 13, weight: .bold))

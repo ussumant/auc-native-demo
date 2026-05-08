@@ -8,8 +8,10 @@ import AppKit
 @Observable
 public final class AUCAppModel {
     public static let openAISetupPromptSeenKey = "auc.didShowOpenAISetupPrompt"
+    public static let onboardingCompletedKey = "auc.didCompleteLauncherFirstOnboarding"
     public static let openAISetupMessage = "Add your OpenAI key to run tasks."
     public static let defaultOpenAIBaseURL = "https://api.openai.com/v1"
+    public static let openAIDemoModelID = "openai/gpt-5.2"
 
     public var composer = AUCTaskComposerState()
     public var tasks: [AUCTaskRecord] = []
@@ -27,6 +29,10 @@ public final class AUCAppModel {
     public var isLauncherCollapsed = false
     public var launcherQuery = ""
     public var isSettingsPresented = false
+    public var isOnboardingPresented = false
+    public var isOpenAIDemoMode = false
+    public var isDemoKeyActive = false
+    public var hasSeededDemoKey = false
     public var authErrorMessage: String?
 
     private var executor: any ExecutorClientProtocol
@@ -111,11 +117,52 @@ public final class AUCAppModel {
             providerSettings = try await executor.getProviderSettings()
             openAIBaseURL = (try? await executor.getOpenAIBaseURL()) ?? baseURLToSave
             settingsMessage = "OpenAI key saved. AUC is ready to run tasks."
+            if isOpenAIDemoMode, hasSeededDemoKey, modelID == Self.openAIDemoModelID {
+                isDemoKeyActive = true
+            }
         } catch {
             errorMessage = error.localizedDescription
             settingsMessage = error.localizedDescription
         }
         isSavingProviderSettings = false
+    }
+
+    public func configureOpenAIDemoMode(seededKeyAvailable: Bool) {
+        isOpenAIDemoMode = true
+        hasSeededDemoKey = seededKeyAvailable
+    }
+
+    public func applySeededDemoKeyIfNeeded(_ apiKey: String?) async {
+        guard isOpenAIDemoMode,
+              let apiKey,
+              !apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              !providerSettings.hasReadyProvider else {
+            return
+        }
+        await saveOpenAIAPIKey(
+            apiKey,
+            baseURL: Self.defaultOpenAIBaseURL,
+            modelID: Self.openAIDemoModelID
+        )
+        if providerSettings.hasReadyProvider {
+            isDemoKeyActive = true
+            settingsMessage = "Demo key active · $5 budget"
+        }
+    }
+
+    public func completeOnboarding(showLauncher: Bool = true) {
+        userDefaults.set(true, forKey: Self.onboardingCompletedKey)
+        isOnboardingPresented = false
+        isSettingsPresented = false
+        if showLauncher {
+            isLauncherPresented = true
+            isLauncherCollapsed = false
+        }
+    }
+
+    public func openOnboarding() {
+        isOnboardingPresented = true
+        isSettingsPresented = false
     }
 
     public func submitComposer(keepLauncherOpen: Bool = false) async {
@@ -132,7 +179,9 @@ public final class AUCAppModel {
         do {
             var request = composer
             if request.selectedModel == nil {
-                request.selectedModel = providerSettings.selectedModel
+                request.selectedModel = isOpenAIDemoMode
+                    ? AUCModelSelection(provider: "openai", model: Self.openAIDemoModelID)
+                    : providerSettings.selectedModel
             }
 
             let task: AUCTaskRecord
@@ -187,6 +236,14 @@ public final class AUCAppModel {
     }
 
     private func maybePromptForOpenAISetupOnFirstLaunch() {
+        if isOpenAIDemoMode {
+            guard !userDefaults.bool(forKey: Self.onboardingCompletedKey) else { return }
+            isOnboardingPresented = true
+            if !providerSettings.hasReadyProvider {
+                settingsMessage = hasSeededDemoKey ? "Preparing the seeded OpenAI demo key." : Self.openAISetupMessage
+            }
+            return
+        }
         guard !providerSettings.hasReadyProvider else { return }
         guard !userDefaults.bool(forKey: Self.openAISetupPromptSeenKey) else { return }
         userDefaults.set(true, forKey: Self.openAISetupPromptSeenKey)
