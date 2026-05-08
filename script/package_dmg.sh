@@ -19,7 +19,7 @@ find_developer_id_application() {
 }
 
 if [[ "$PACKAGE_PROFILE" == "openai-demo" ]]; then
-  VERSION="${AUC_RELEASE_VERSION:-0.1.1-openai-demo}"
+  VERSION="${AUC_RELEASE_VERSION:-0.1.2-openai-demo}"
   DMG_STAGING="$DIST_DIR/$APP_NAME-$VERSION"
   DMG_PATH="$DIST_DIR/$APP_NAME-$VERSION.dmg"
   CHECKSUM_PATH="$DMG_PATH.sha256"
@@ -51,6 +51,7 @@ AUC_BUILD_CONFIGURATION=release \
   AUC_SKIP_LAUNCH=1 \
   AUC_SIGN_IDENTITY="$SIGN_IDENTITY" \
   AUC_PACKAGE_PROFILE="$PACKAGE_PROFILE" \
+  AUC_RELEASE_VERSION="$VERSION" \
   ./script/build_and_run.sh
 
 echo "Verifying app signature..."

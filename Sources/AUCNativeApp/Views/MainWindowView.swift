@@ -8,24 +8,28 @@ struct MainWindowView: View {
         ZStack {
             AUCDesign.ColorToken.appBackground.ignoresSafeArea()
 
-            HStack(spacing: 0) {
-                SidebarView(model: model)
-                    .frame(width: AUCDesign.Space.sidebarWidth)
+            if model.executorPhase == .installBlocked {
+                InstallLocationBlockedView(model: model)
+            } else {
+                HStack(spacing: 0) {
+                    SidebarView(model: model)
+                        .frame(width: AUCDesign.Space.sidebarWidth)
 
-                CommandCenterView(model: model)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    CommandCenterView(model: model)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
 
-                ActiveTaskView(model: model)
-                    .frame(width: AUCDesign.Space.activePanelWidth)
+                    ActiveTaskView(model: model)
+                        .frame(width: AUCDesign.Space.activePanelWidth)
+                }
+
+                VStack {
+                    Spacer()
+                    LauncherPill(model: model)
+                        .padding(.bottom, AUCDesign.Space.lg)
+                }
+                .padding(.leading, AUCDesign.Space.sidebarWidth)
+                .padding(.trailing, AUCDesign.Space.activePanelWidth)
             }
-
-            VStack {
-                Spacer()
-                LauncherPill(model: model)
-                    .padding(.bottom, AUCDesign.Space.lg)
-            }
-            .padding(.leading, AUCDesign.Space.sidebarWidth)
-            .padding(.trailing, AUCDesign.Space.activePanelWidth)
         }
         .foregroundStyle(AUCDesign.ColorToken.textPrimary)
         .font(AUCDesign.FontToken.sans(size: 14))
@@ -38,6 +42,75 @@ struct MainWindowView: View {
             AUCOnboardingView(model: model)
                 .frame(width: 430, height: 620)
                 .presentationBackground(.ultraThinMaterial)
+        }
+    }
+}
+
+private struct InstallLocationBlockedView: View {
+    @Bindable var model: AUCAppModel
+
+    var body: some View {
+        VStack(spacing: AUCDesign.Space.lg) {
+            Image(systemName: "arrow.down.app.fill")
+                .font(AUCDesign.FontToken.sans(size: 48, weight: .semibold))
+                .foregroundStyle(AUCDesign.ColorToken.violetLight)
+
+            VStack(spacing: AUCDesign.Space.sm) {
+                Text("Move AUC Native to Applications")
+                    .font(AUCDesign.FontToken.sans(size: 30, weight: .semibold))
+                Text("For the demo build, AUC starts its executor only after the app is copied into Applications.")
+                    .font(AUCDesign.FontToken.sans(size: 14, weight: .medium))
+                    .foregroundStyle(AUCDesign.ColorToken.textSecondary)
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: 560)
+            }
+
+            VStack(alignment: .leading, spacing: AUCDesign.Space.sm) {
+                installStep(number: "1", text: "Drag AUC Native from the DMG into Applications.")
+                installStep(number: "2", text: "Eject the DMG.")
+                installStep(number: "3", text: "Open AUC Native from Applications, then press Option+B.")
+            }
+            .padding(AUCDesign.Space.lg)
+            .aucPanel(cornerRadius: AUCDesign.Radius.lg)
+            .frame(maxWidth: 560)
+
+            HStack(spacing: AUCDesign.Space.sm) {
+                Button {
+                    #if canImport(AppKit)
+                    NSWorkspace.shared.open(URL(fileURLWithPath: "/Applications", isDirectory: true))
+                    #endif
+                } label: {
+                    Label("Open Applications", systemImage: "folder")
+                }
+                .buttonStyle(PrimaryButtonStyle())
+
+                Button {
+                    #if canImport(AppKit)
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(model.executorDiagnostics.copyText, forType: .string)
+                    #endif
+                } label: {
+                    Label("Copy diagnostics", systemImage: "doc.on.doc")
+                }
+                .buttonStyle(SecondaryButtonStyle())
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding(AUCDesign.Space.xl)
+        .background(AUCDesign.ColorToken.background)
+    }
+
+    private func installStep(number: String, text: String) -> some View {
+        HStack(spacing: AUCDesign.Space.sm) {
+            Text(number)
+                .font(AUCDesign.FontToken.sans(size: 12, weight: .bold))
+                .frame(width: 24, height: 24)
+                .background(AUCDesign.ColorToken.violet.opacity(0.22))
+                .foregroundStyle(AUCDesign.ColorToken.violetLight)
+                .clipShape(Circle())
+            Text(text)
+                .font(AUCDesign.FontToken.sans(size: 14, weight: .medium))
+                .foregroundStyle(AUCDesign.ColorToken.textPrimary)
         }
     }
 }

@@ -194,6 +194,15 @@ private struct ExecutorRepairCard: View {
                     .foregroundStyle(AUCDesign.ColorToken.textSecondary)
                     .lineLimit(3)
             }
+            if !model.isExecutorConnected, model.executorPhase != .installBlocked {
+                Button {
+                    Task { await model.repairExecutor() }
+                } label: {
+                    Label("Repair executor", systemImage: "wrench.and.screwdriver")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(SecondaryButtonStyle())
+            }
         }
         .padding(AUCDesign.Space.sm)
         .background(AUCDesign.ColorToken.panel)

@@ -219,6 +219,53 @@ struct AppModelTests {
         #expect(model.settingsMessage == AUCAppModel.openAISetupMessage)
     }
 
+    @Test func openAIDemoModeSkipsOnboardingForSameCompletedVersion() async throws {
+        let (suiteName, defaults) = makeIsolatedDefaults()
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        defaults.set("0.1.1-openai-demo", forKey: AUCAppModel.onboardingCompletedVersionKey)
+        let executor = RecordingExecutor()
+        let model = AUCAppModel(executor: executor, userDefaults: defaults)
+        model.configureOpenAIDemoMode(seededKeyAvailable: false, releaseVersion: "0.1.1-openai-demo")
+
+        await model.connect()
+
+        #expect(!model.isOnboardingPresented)
+    }
+
+    @Test func openAIDemoModeShowsOnboardingForNewVersionEvenIfOldBooleanExists() async throws {
+        let (suiteName, defaults) = makeIsolatedDefaults()
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        defaults.set(true, forKey: AUCAppModel.onboardingCompletedKey)
+        defaults.set("0.1.0-demo", forKey: AUCAppModel.onboardingCompletedVersionKey)
+        let executor = RecordingExecutor()
+        let model = AUCAppModel(executor: executor, userDefaults: defaults)
+        model.configureOpenAIDemoMode(seededKeyAvailable: false, releaseVersion: "0.1.1-openai-demo")
+
+        await model.connect()
+
+        #expect(model.isOnboardingPresented)
+    }
+
+    @Test func disconnectedSubmitRepairsExecutorBeforeProviderSetup() async throws {
+        let executor = RecordingExecutor()
+        let model = AUCAppModel(executor: executor)
+        model.composer.prompt = "Say hi"
+        var repairCount = 0
+        model.executorRepairHandler = {
+            repairCount += 1
+            model.isExecutorConnected = true
+            model.executorPhase = .connected
+            model.providerSettings = .readyOpenAI
+            return true
+        }
+
+        await model.submitComposer()
+
+        #expect(repairCount == 1)
+        #expect(await executor.startedPrompts == ["Say hi"])
+        #expect(!model.isSettingsPresented)
+    }
+
     @Test func seededDemoKeySavesOpenAIAndMarksDemoActive() async throws {
         let executor = RecordingExecutor()
         let model = AUCAppModel(executor: executor)
@@ -232,6 +279,23 @@ struct AppModelTests {
         #expect(model.providerSettings.hasReadyProvider)
         #expect(model.isDemoKeyActive)
         #expect(model.settingsMessage == "Demo key active · $5 budget")
+    }
+
+    @Test func seededDemoKeyReplacesDifferentExistingOpenAIKeyInDemoMode() async throws {
+        let executor = RecordingExecutor(providerSettings: AUCProviderSettings(
+            hasReadyProvider: true,
+            selectedModel: AUCModelSelection(provider: "openai", model: "openai/gpt-5.2"),
+            activeProviderID: "openai",
+            openAIKeyPrefix: "sk-old"
+        ))
+        let model = AUCAppModel(executor: executor)
+        model.configureOpenAIDemoMode(seededKeyAvailable: true)
+
+        await model.connect()
+        await model.applySeededDemoKeyIfNeeded("sk-demo-key")
+
+        #expect(await executor.savedOpenAIKeys == ["sk-demo-key"])
+        #expect(model.isDemoKeyActive)
     }
 
     @Test func submitComposerWithoutProviderOpensSettingsAndPreservesPrompt() async throws {
@@ -278,6 +342,8 @@ private extension AUCProviderSettings {
 private extension AUCAppModel {
     func useReadyProvider() {
         providerSettings = .readyOpenAI
+        isExecutorConnected = true
+        executorPhase = .connected
     }
 }
 
@@ -314,6 +380,7 @@ private actor RecordingExecutor: ExecutorClientProtocol {
     }
 
     func connect() async throws {}
+    func ping() async throws {}
 
     func startTask(_ composer: AUCTaskComposerState) async throws -> AUCTaskRecord {
         startedPrompts.append(composer.trimmedPrompt)

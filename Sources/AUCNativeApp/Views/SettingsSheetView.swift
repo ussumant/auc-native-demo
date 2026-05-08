@@ -308,9 +308,9 @@ struct SettingsSheetView: View {
                 .disabled(model.isSavingProviderSettings || openAIKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
 
                 Button {
-                    Task { await model.connect() }
+                    Task { await model.repairExecutor() }
                 } label: {
-                    Label("Refresh status", systemImage: "arrow.clockwise")
+                    Label(model.isExecutorConnected ? "Refresh status" : "Repair executor", systemImage: model.isExecutorConnected ? "arrow.clockwise" : "wrench.and.screwdriver")
                 }
                 .buttonStyle(SecondaryButtonStyle())
             }
@@ -321,12 +321,70 @@ struct SettingsSheetView: View {
 
     private var diagnosticsPanel: some View {
         VStack(alignment: .leading, spacing: AUCDesign.Space.sm) {
-            Text("Diagnostics")
-                .font(AUCDesign.FontToken.sans(size: 14, weight: .semibold))
-            Text(model.errorMessage ?? "No current daemon errors.")
-                .font(AUCDesign.FontToken.sans(size: 12))
-                .foregroundStyle(AUCDesign.ColorToken.textSecondary)
-                .textSelection(.enabled)
+            HStack {
+                Text("Diagnostics")
+                    .font(AUCDesign.FontToken.sans(size: 14, weight: .semibold))
+                Spacer()
+                Button {
+                    Task { await model.repairExecutor() }
+                } label: {
+                    Label("Repair executor", systemImage: "wrench.and.screwdriver")
+                }
+                .buttonStyle(SecondaryButtonStyle())
+                .disabled(model.executorPhase == .installBlocked || model.executorPhase == .repairing)
+            }
+
+            settingsInlineValue(
+                value: "Phase: \(model.executorPhase.rawValue)",
+                systemImage: model.isExecutorConnected ? "checkmark.seal.fill" : "exclamationmark.triangle.fill",
+                tint: model.isExecutorConnected ? AUCDesign.ColorToken.green : AUCDesign.ColorToken.amber
+            )
+            settingsInlineValue(
+                value: "Socket: \(model.executorDiagnostics.socketPath.isEmpty ? "unknown" : model.executorDiagnostics.socketPath)",
+                systemImage: "point.3.connected.trianglepath.dotted",
+                tint: AUCDesign.ColorToken.cyan
+            )
+            settingsInlineValue(
+                value: "Daemon log: \(model.executorDiagnostics.logPath.isEmpty ? "unknown" : model.executorDiagnostics.logPath)",
+                systemImage: "doc.text",
+                tint: AUCDesign.ColorToken.violetLight
+            )
+            if let staleDaemon = model.executorDiagnostics.staleDaemonDescription {
+                settingsInlineValue(
+                    value: "Stale daemon: \(staleDaemon)",
+                    systemImage: "exclamationmark.triangle.fill",
+                    tint: AUCDesign.ColorToken.amber
+                )
+            }
+            if let logError = model.executorDiagnostics.lastLogError {
+                settingsInlineValue(
+                    value: "Latest daemon error: \(logError)",
+                    systemImage: "waveform.path.ecg",
+                    tint: AUCDesign.ColorToken.red
+                )
+            }
+            settingsInlineValue(
+                value: "App: \(model.executorDiagnostics.appPath.isEmpty ? "unknown" : model.executorDiagnostics.appPath)",
+                systemImage: "app.dashed",
+                tint: model.executorDiagnostics.isTranslocated || model.executorDiagnostics.isRunningFromDMG ? AUCDesign.ColorToken.amber : AUCDesign.ColorToken.green
+            )
+
+            if let error = model.errorMessage {
+                Text(error)
+                    .font(AUCDesign.FontToken.sans(size: 12))
+                    .foregroundStyle(AUCDesign.ColorToken.textSecondary)
+                    .textSelection(.enabled)
+            }
+
+            Button {
+                #if canImport(AppKit)
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(model.executorDiagnostics.copyText, forType: .string)
+                #endif
+            } label: {
+                Label("Copy diagnostics", systemImage: "doc.on.doc")
+            }
+            .buttonStyle(SecondaryButtonStyle())
         }
         .padding(AUCDesign.Space.lg)
         .aucPanel()

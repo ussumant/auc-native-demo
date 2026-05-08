@@ -18,6 +18,7 @@ public struct ExecutorPaths: Equatable, Sendable {
 public enum ExecutorProcessError: LocalizedError, Equatable {
     case daemonEntryMissing
     case nodeBinaryMissing
+    case runtimePreflightFailed(String)
     case launchFailed(String)
 
     public var errorDescription: String? {
@@ -26,15 +27,28 @@ public enum ExecutorProcessError: LocalizedError, Equatable {
             return "Could not find the bundled AUC daemon entrypoint."
         case .nodeBinaryMissing:
             return "Could not find a Node runtime for the bundled executor."
+        case .runtimePreflightFailed(let message):
+            return "The bundled Node runtime crashed before the executor could start: \(message)"
         case .launchFailed(let message):
             return "Could not launch the AUC executor: \(message)"
         }
     }
 }
 
+public struct AUCManagedRuntimeProcess: Equatable, Sendable {
+    public var pid: Int32
+    public var command: String
+
+    public init(pid: Int32, command: String) {
+        self.pid = pid
+        self.command = command
+    }
+}
+
 public actor ExecutorProcessManager {
     public private(set) var process: Process?
     private let fileManager: FileManager
+    private var logFileHandle: FileHandle?
 
     public init(fileManager: FileManager = .default) {
         self.fileManager = fileManager
@@ -60,7 +74,11 @@ public actor ExecutorProcessManager {
             )
         }
 
-        let resources = bundle.resourceURL
+        let executableResources = Self.resourcesURLFromExecutablePath(environment["AUC_EXECUTABLE_PATH"])
+        let resourceCandidates = [bundle.resourceURL, executableResources]
+        let resources = resourceCandidates.compactMap { $0 }.first {
+            FileManager.default.fileExists(atPath: $0.appendingPathComponent("Executor/daemon/index.js").path)
+        } ?? bundle.resourceURL ?? executableResources
         let bundledNode = [
             resources?.appendingPathComponent("nodejs/darwin-arm64/node-v24.15.0-darwin-arm64/bin/node"),
             resources?.appendingPathComponent("Executor/nodejs/darwin-arm64/node-v24.15.0-darwin-arm64/bin/node")
@@ -110,6 +128,17 @@ public actor ExecutorProcessManager {
         )
     }
 
+    private static func resourcesURLFromExecutablePath(_ environmentExecutablePath: String?) -> URL? {
+        let executablePath = environmentExecutablePath ?? ProcessInfo.processInfo.arguments.first
+        guard let executablePath else { return nil }
+        let executableURL = URL(fileURLWithPath: executablePath)
+        let macOSDirectory = executableURL.deletingLastPathComponent()
+        guard macOSDirectory.lastPathComponent == "MacOS" else { return nil }
+        return macOSDirectory
+            .deletingLastPathComponent()
+            .appendingPathComponent("Resources", isDirectory: true)
+    }
+
     public func ensureRunning(paths: ExecutorPaths) async throws {
         try fileManager.createDirectory(at: paths.dataDir, withIntermediateDirectories: true)
         guard let daemonEntry = paths.daemonEntry, fileManager.fileExists(atPath: daemonEntry.path) else {
@@ -129,6 +158,13 @@ public actor ExecutorProcessManager {
         if let process, process.isRunning {
             return
         }
+        appendToDaemonLog("Preparing packaged daemon launch.\n", dataDir: paths.dataDir)
+        terminateStaleRuntimeProcesses(paths: paths, includeCurrentResourceDaemons: true)
+        appendToDaemonLog("Stale runtime cleanup finished.\n", dataDir: paths.dataDir)
+        if paths.repoRoot == nil {
+            try preflightPackagedRuntime(nodeBinary: nodeBinary, paths: paths)
+        }
+        appendToDaemonLog("Node preflight finished.\n", dataDir: paths.dataDir)
 
         let process = Process()
         var arguments = [daemonEntry.path, "--data-dir", paths.dataDir.path, "--socket-path", socketPath]
@@ -158,8 +194,14 @@ public actor ExecutorProcessManager {
             process.currentDirectoryURL = repoRoot
         }
         process.environment = environment
-        process.standardOutput = Pipe()
-        process.standardError = Pipe()
+        if let handle = try? Self.openDaemonLog(in: paths.dataDir, fileManager: fileManager) {
+            logFileHandle = handle
+            process.standardOutput = handle
+            process.standardError = handle
+        } else {
+            process.standardOutput = Pipe()
+            process.standardError = Pipe()
+        }
 
         do {
             try process.run()
@@ -172,10 +214,255 @@ public actor ExecutorProcessManager {
     public func stop() {
         process?.terminate()
         process = nil
+        try? logFileHandle?.close()
+        logFileHandle = nil
     }
 
     public static func socketPath(for dataDir: URL) -> String {
         dataDir.appendingPathComponent("daemon.sock").path
+    }
+
+    public static func daemonLogPath(for dataDir: URL) -> URL {
+        dataDir
+            .appendingPathComponent("Logs", isDirectory: true)
+            .appendingPathComponent("daemon.log")
+    }
+
+    public static func diagnostics(
+        paths: ExecutorPaths,
+        appPath: String,
+        installStatus: AUCInstallLocationStatus?,
+        isConnected: Bool,
+        executorPhase: AUCExecutorPhase,
+        providerReady: Bool,
+        lastError: String?
+    ) -> AUCExecutorDiagnostics {
+        let socketPath = socketPath(for: paths.dataDir)
+        let expectedResourcesPath = expectedResourcesPath(for: paths)
+        let daemonProcess = runningManagedDaemonProcesses(socketPath: socketPath).first
+        let staleDescription = daemonProcess
+            .flatMap { process -> String? in
+                guard isStaleManagedProcess(process.command, expectedResourcesPath: expectedResourcesPath) else {
+                    return nil
+                }
+                return "pid \(process.pid) from a different app bundle"
+            }
+        let pid = daemonProcess?.pid ?? readDaemonPID(from: paths.dataDir)
+        let status = installStatus ?? AUCInstallLocationGuard.evaluate(appPath: appPath, isOpenAIDemoMode: false)
+        let logError = latestDaemonLogError(in: paths.dataDir)
+        return AUCExecutorDiagnostics(
+            appPath: appPath,
+            isRunningFromDMG: status.isRunningFromDMG,
+            isTranslocated: status.isTranslocated,
+            dataDir: paths.dataDir.path,
+            socketPath: socketPath,
+            daemonPid: pid,
+            nodeBinaryPath: paths.nodeBinary?.path,
+            daemonEntryPath: paths.daemonEntry?.path,
+            logPath: daemonLogPath(for: paths.dataDir).path,
+            isConnected: isConnected,
+            executorPhase: executorPhase,
+            providerReady: providerReady,
+            lastError: lastError ?? staleDescription ?? logError,
+            daemonCommand: daemonProcess?.command,
+            staleDaemonDescription: staleDescription,
+            lastLogError: logError
+        )
+    }
+
+    public func cleanupStaleRuntimeFiles(paths: ExecutorPaths) {
+        stop()
+        terminateStaleRuntimeProcesses(paths: paths, includeCurrentResourceDaemons: true)
+        try? fileManager.removeItem(atPath: Self.socketPath(for: paths.dataDir))
+        try? fileManager.removeItem(at: paths.dataDir.appendingPathComponent("daemon.pid"))
+    }
+
+    public static func parseProcessList(_ text: String) -> [AUCManagedRuntimeProcess] {
+        text.split(separator: "\n").compactMap { rawLine in
+            let line = rawLine.trimmingCharacters(in: .whitespaces)
+            guard let firstSpace = line.firstIndex(where: { $0 == " " || $0 == "\t" }) else { return nil }
+            let pidText = line[..<firstSpace].trimmingCharacters(in: .whitespaces)
+            let command = line[firstSpace...].trimmingCharacters(in: .whitespaces)
+            guard let pid = Int32(pidText), !command.isEmpty else { return nil }
+            return AUCManagedRuntimeProcess(pid: pid, command: command)
+        }
+    }
+
+    public static func isManagedDaemonProcess(_ command: String, socketPath: String) -> Bool {
+        command.contains("daemon/index.js") &&
+            command.contains("--socket-path \(socketPath)") &&
+            (command.contains("/AUCNative.app/Contents/Resources/") ||
+             command.contains("/AUC Native.app/Contents/Resources/"))
+    }
+
+    public static func isStaleManagedProcess(_ command: String, expectedResourcesPath: String?) -> Bool {
+        guard command.contains("/AUCNative.app/Contents/Resources/") ||
+              command.contains("/AUC Native.app/Contents/Resources/") ||
+              command.contains("/AppTranslocation/") else {
+            return false
+        }
+        guard let expectedResourcesPath, !expectedResourcesPath.isEmpty else { return true }
+        return !command.contains(expectedResourcesPath)
+    }
+
+    public static func expectedResourcesPath(for paths: ExecutorPaths) -> String? {
+        guard paths.repoRoot == nil, let daemonEntry = paths.daemonEntry else { return nil }
+        return daemonEntry
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .path
+    }
+
+    private func preflightPackagedRuntime(nodeBinary: URL, paths: ExecutorPaths) throws {
+        appendToDaemonLog("Starting Node preflight with packaged runtime.\n", dataDir: paths.dataDir)
+        let process = Process()
+        process.executableURL = nodeBinary
+        process.arguments = ["-e", "process.stdout.write('ok')"]
+        let environment = ProcessInfo.processInfo.environment
+        process.environment = environment
+
+        let logHandle = try? Self.openDaemonLog(in: paths.dataDir, fileManager: fileManager)
+        if let logHandle {
+            process.standardOutput = logHandle
+            process.standardError = logHandle
+        } else {
+            process.standardOutput = Pipe()
+            process.standardError = Pipe()
+        }
+        do {
+            try process.run()
+            process.waitUntilExit()
+        } catch {
+            try? logHandle?.close()
+            appendToDaemonLog("Node preflight launch failed: \(error.localizedDescription)\n", dataDir: paths.dataDir)
+            throw ExecutorProcessError.runtimePreflightFailed(error.localizedDescription)
+        }
+
+        try? logHandle?.close()
+        guard process.terminationStatus == 0 else {
+            let message = Self.latestDaemonLogError(in: paths.dataDir) ?? "Bundled Node exited with status \(process.terminationStatus)."
+            appendToDaemonLog("Node preflight failed: \(message)\n", dataDir: paths.dataDir)
+            throw ExecutorProcessError.runtimePreflightFailed(Self.compactRuntimeError(message))
+        }
+    }
+
+    private func terminateStaleRuntimeProcesses(paths: ExecutorPaths, includeCurrentResourceDaemons: Bool) {
+        let socketPath = Self.socketPath(for: paths.dataDir)
+        let expectedResourcesPath = Self.expectedResourcesPath(for: paths)
+        for process in Self.runningManagedProcesses(socketPath: socketPath) {
+            let isDaemon = Self.isManagedDaemonProcess(process.command, socketPath: socketPath)
+            let isStale = Self.isStaleManagedProcess(process.command, expectedResourcesPath: expectedResourcesPath)
+            guard isStale || (includeCurrentResourceDaemons && isDaemon) else { continue }
+            Darwin.kill(process.pid, SIGTERM)
+        }
+        Thread.sleep(forTimeInterval: 0.15)
+        for process in Self.runningManagedProcesses(socketPath: socketPath) {
+            let isDaemon = Self.isManagedDaemonProcess(process.command, socketPath: socketPath)
+            let isStale = Self.isStaleManagedProcess(process.command, expectedResourcesPath: expectedResourcesPath)
+            guard isStale || (includeCurrentResourceDaemons && isDaemon) else { continue }
+            Darwin.kill(process.pid, SIGKILL)
+        }
+    }
+
+    private static func runningManagedDaemonProcesses(socketPath: String) -> [AUCManagedRuntimeProcess] {
+        runningManagedProcesses(socketPath: socketPath).filter {
+            isManagedDaemonProcess($0.command, socketPath: socketPath)
+        }
+    }
+
+    private static func runningManagedProcesses(socketPath: String) -> [AUCManagedRuntimeProcess] {
+        runningProcesses().filter { process in
+            isManagedDaemonProcess(process.command, socketPath: socketPath) ||
+                (process.command.contains("/AUCNative.app/Contents/Resources/") ||
+                 process.command.contains("/AUC Native.app/Contents/Resources/") ||
+                 process.command.contains("/AppTranslocation/")) &&
+                (process.command.contains("mcp-tools") ||
+                 process.command.contains("opencode") ||
+                 process.command.contains("nodejs/darwin-arm64"))
+        }
+    }
+
+    private static func runningProcesses() -> [AUCManagedRuntimeProcess] {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/ps")
+        process.arguments = ["-axo", "pid=,command="]
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = Pipe()
+        do {
+            try process.run()
+        } catch {
+            return []
+        }
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        let text = String(data: data, encoding: .utf8) ?? ""
+        let currentPID = ProcessInfo.processInfo.processIdentifier
+        return parseProcessList(text).filter { $0.pid != currentPID }
+    }
+
+    private func appendToDaemonLog(_ text: String, dataDir: URL) {
+        guard let data = text.data(using: .utf8),
+              let handle = try? Self.openDaemonLog(in: dataDir, fileManager: fileManager) else {
+            return
+        }
+        try? handle.write(contentsOf: data)
+        try? handle.close()
+    }
+
+    public static func latestDaemonLogError(in dataDir: URL) -> String? {
+        let url = daemonLogPath(for: dataDir)
+        guard let data = try? Data(contentsOf: url),
+              let text = String(data: data.suffix(32_768), encoding: .utf8) else {
+            return nil
+        }
+        let markers = [
+            "Fatal process out of memory: Failed to reserve virtual memory for CodeRange",
+            "Node preflight failed",
+            "OpenCode server exited",
+            "Task startup failed"
+        ]
+        for line in text.components(separatedBy: .newlines).reversed() {
+            for marker in markers where line.contains(marker) {
+                return marker
+            }
+        }
+        return nil
+    }
+
+    private static func compactRuntimeError(_ message: String) -> String {
+        if message.contains("Failed to reserve virtual memory for CodeRange") {
+            return "Node/V8 could not reserve CodeRange memory after stale runtime cleanup. Quit old AUC copies or restart the Mac, then try Repair executor."
+        }
+        if message.isEmpty {
+            return "No output from bundled Node preflight."
+        }
+        return message.count > 240 ? String(message.prefix(240)) + "..." : message
+    }
+
+    private static func openDaemonLog(in dataDir: URL, fileManager: FileManager) throws -> FileHandle {
+        let logURL = daemonLogPath(for: dataDir)
+        try fileManager.createDirectory(at: logURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        if !fileManager.fileExists(atPath: logURL.path) {
+            fileManager.createFile(atPath: logURL.path, contents: nil)
+        }
+        let handle = try FileHandle(forWritingTo: logURL)
+        try handle.seekToEnd()
+        if let header = "\n--- AUC daemon launch \(ISO8601DateFormatter().string(from: Date())) ---\n".data(using: .utf8) {
+            try handle.write(contentsOf: header)
+        }
+        return handle
+    }
+
+    private static func readDaemonPID(from dataDir: URL) -> Int32? {
+        let pidURL = dataDir.appendingPathComponent("daemon.pid")
+        guard let data = try? Data(contentsOf: pidURL),
+              let payload = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let pid = payload["pid"] as? Int else {
+            return nil
+        }
+        return Int32(pid)
     }
 
     private static func canConnect(toSocketPath socketPath: String) -> Bool {
@@ -227,6 +514,7 @@ public actor DemoExecutorClient: ExecutorClientProtocol {
     public init() {}
 
     public func connect() async throws {}
+    public func ping() async throws {}
 
     public func startTask(_ composer: AUCTaskComposerState) async throws -> AUCTaskRecord {
         let task = AUCTaskRecord(

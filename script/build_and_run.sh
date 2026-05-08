@@ -13,6 +13,7 @@ EXECUTOR_REPO="${AUC_EXECUTOR_REPO:-$ROOT_DIR/../agent-computer/accomplish}"
 SIGN_IDENTITY="${AUC_SIGN_IDENTITY:--}"
 ICON_SOURCE="${AUC_ICON_SOURCE:-$ROOT_DIR/Assets/AppIcon.icns}"
 PACKAGE_PROFILE="${AUC_PACKAGE_PROFILE:-full}"
+ENTITLEMENTS_FILE="$ROOT_DIR/script/AUCNative.entitlements"
 
 is_demo_slim() {
   [[ "$PACKAGE_PROFILE" == "demo-slim" || "$PACKAGE_PROFILE" == "openai-demo" ]]
@@ -34,9 +35,15 @@ sign_nested_macho() {
   should_developer_sign || return 0
   echo "Signing nested native binaries..."
   while IFS= read -r -d '' file_path; do
-    if file "$file_path" | grep -Eq 'Mach-O|dynamically linked shared library|current ar archive'; then
-      codesign --force --timestamp --options runtime --sign "$SIGN_IDENTITY" "$file_path" >/dev/null 2>&1 || \
+    file_type="$(file "$file_path")"
+    if grep -Eq 'Mach-O|dynamically linked shared library|current ar archive' <<<"$file_type"; then
+      if grep -Eq 'Mach-O .* executable' <<<"$file_type" && [[ -f "$ENTITLEMENTS_FILE" ]]; then
+        codesign --force --timestamp --options runtime --entitlements "$ENTITLEMENTS_FILE" --sign "$SIGN_IDENTITY" "$file_path" >/dev/null 2>&1 || \
+          codesign --force --timestamp --sign "$SIGN_IDENTITY" "$file_path" >/dev/null
+      else
+        codesign --force --timestamp --options runtime --sign "$SIGN_IDENTITY" "$file_path" >/dev/null 2>&1 || \
         codesign --force --timestamp --sign "$SIGN_IDENTITY" "$file_path" >/dev/null
+      fi
     fi
   done < <(
     find "$APP_DIR" -type f \
@@ -154,7 +161,7 @@ if is_openai_demo; then
   if [[ -n "${AUC_DEMO_OPENAI_API_KEY:-}" ]]; then
     DEMO_KEY_JSON=",\n  \"seededOpenAIAPIKey\": \"$(json_escape "$AUC_DEMO_OPENAI_API_KEY")\""
   fi
-  printf '{\n  "profile": "openai-demo",\n  "releaseVersion": "0.1.1-openai-demo"%b\n}\n' "$DEMO_KEY_JSON" > "$RESOURCES_DIR/DemoReleaseConfig.json"
+  printf '{\n  "profile": "openai-demo",\n  "releaseVersion": "%s"%b\n}\n' "${AUC_RELEASE_VERSION:-0.1.2-openai-demo}" "$DEMO_KEY_JSON" > "$RESOURCES_DIR/DemoReleaseConfig.json"
 fi
 
 cat > "$CONTENTS_DIR/Info.plist" <<PLIST
@@ -194,15 +201,21 @@ PLIST
 
 echo "Signing app bundle..."
 sign_nested_macho
-codesign --force --deep --timestamp --options runtime --sign "$SIGN_IDENTITY" "$APP_DIR" >/dev/null
+if [[ -f "$ENTITLEMENTS_FILE" ]]; then
+  codesign --force --deep --timestamp --options runtime --entitlements "$ENTITLEMENTS_FILE" --sign "$SIGN_IDENTITY" "$APP_DIR" >/dev/null
+else
+  codesign --force --deep --timestamp --options runtime --sign "$SIGN_IDENTITY" "$APP_DIR" >/dev/null
+fi
 
 if [[ "${AUC_SKIP_LAUNCH:-0}" == "1" ]]; then
   exit 0
 fi
 
 echo "Launching $APP_NAME..."
+pkill -x "$APP_NAME" 2>/dev/null || true
 pkill -f "$MACOS_DIR/AUCNative" 2>/dev/null || true
-pkill -f "AUCNative/daemon.sock" 2>/dev/null || true
+pkill -f "/Applications/AUC Native.app/Contents/MacOS/AUCNative" 2>/dev/null || true
+pkill -f "daemon/index.js.*AUCNative/daemon.sock" 2>/dev/null || true
 rm -f "$HOME/Library/Application Support/AUCNative/daemon.sock" "$HOME/Library/Application Support/AUCNative/daemon.pid"
 open "$APP_DIR"
 

@@ -57,7 +57,31 @@ struct CommandCenterView: View {
                             color: AUCDesign.ColorToken.violetLight
                         )
                         .frame(maxWidth: AUCDesign.Space.commandMaxWidth)
-                    } else if !model.providerSettings.hasReadyProvider {
+                    } else if model.executorPhase == .starting || model.executorPhase == .repairing {
+                        StatusBanner(
+                            title: model.executorPhase == .repairing ? "Repairing executor" : "Starting executor",
+                            message: "AUC is preparing the bundled runtime before checking provider setup.",
+                            systemImage: "circle.dotted",
+                            color: AUCDesign.ColorToken.violetLight
+                        )
+                        .frame(maxWidth: AUCDesign.Space.commandMaxWidth)
+                    } else if model.executorPhase == .crashed {
+                        StatusBanner(
+                            title: "Executor crashed",
+                            message: "Use Repair executor. Diagnostics includes the latest daemon runtime error.",
+                            systemImage: "exclamationmark.octagon.fill",
+                            color: AUCDesign.ColorToken.amber
+                        )
+                        .frame(maxWidth: AUCDesign.Space.commandMaxWidth)
+                    } else if model.executorPhase == .failed {
+                        StatusBanner(
+                            title: "Executor needs repair",
+                            message: "Use Repair executor in the sidebar or Settings, then start the task again.",
+                            systemImage: "wrench.and.screwdriver.fill",
+                            color: AUCDesign.ColorToken.amber
+                        )
+                        .frame(maxWidth: AUCDesign.Space.commandMaxWidth)
+                    } else if model.executorPhase.isReadyForProviderSetup && !model.providerSettings.hasReadyProvider {
                         StatusBanner(
                             title: "Provider setup needed",
                             message: "Add your OpenAI key in Settings before starting tasks.",
@@ -153,7 +177,7 @@ struct CommandCenterView: View {
 
                 Spacer()
 
-                ModelIndicator(settings: model.providerSettings)
+                ModelIndicator(model: model)
 
                 Button {} label: {
                     Image(systemName: "mic")
@@ -301,14 +325,14 @@ private struct StatusBanner: View {
 }
 
 private struct ModelIndicator: View {
-    let settings: AUCProviderSettings
+    @Bindable var model: AUCAppModel
 
     var body: some View {
         HStack(spacing: AUCDesign.Space.xs) {
             Circle()
-                .fill(settings.hasReadyProvider ? AUCDesign.ColorToken.green : AUCDesign.ColorToken.amber)
+                .fill(dotColor)
                 .frame(width: 7, height: 7)
-            Text(settings.selectedModel?.model ?? "Provider setup")
+            Text(label)
                 .font(AUCDesign.FontToken.sans(size: 12, weight: .semibold))
                 .foregroundStyle(AUCDesign.ColorToken.textSecondary)
                 .lineLimit(1)
@@ -317,6 +341,32 @@ private struct ModelIndicator: View {
         .padding(.vertical, 7)
         .background(AUCDesign.ColorToken.panel)
         .clipShape(Capsule())
+    }
+
+    private var dotColor: Color {
+        if model.providerSettings.hasReadyProvider { return AUCDesign.ColorToken.green }
+        if model.executorPhase == .starting || model.executorPhase == .repairing { return AUCDesign.ColorToken.violetLight }
+        return AUCDesign.ColorToken.amber
+    }
+
+    private var label: String {
+        if model.providerSettings.hasReadyProvider {
+            return model.providerSettings.selectedModel?.model ?? AUCAppModel.openAIDemoModelID
+        }
+        switch model.executorPhase {
+        case .starting:
+            return "Starting executor"
+        case .repairing:
+            return "Repairing executor"
+        case .failed:
+            return "Executor repair"
+        case .crashed:
+            return "Executor crashed"
+        case .installBlocked:
+            return "Install required"
+        case .connected:
+            return "Provider setup"
+        }
     }
 }
 

@@ -2,6 +2,7 @@ import Foundation
 
 public protocol ExecutorClientProtocol: Sendable {
     func connect() async throws
+    func ping() async throws
     func startTask(_ composer: AUCTaskComposerState) async throws -> AUCTaskRecord
     func cancelTask(id: String) async throws
     func interruptTask(id: String) async throws
@@ -74,6 +75,10 @@ public actor ExecutorClient: ExecutorClientProtocol {
     public func connect() async throws {
         try await transport.connect()
         startReadLoopIfNeeded()
+    }
+
+    public func ping() async throws {
+        let _: JSONValue = try await call("daemon.ping", params: nil, as: JSONValue.self)
     }
 
     public func startTask(_ composer: AUCTaskComposerState) async throws -> AUCTaskRecord {

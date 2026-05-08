@@ -9,6 +9,7 @@ import AppKit
 public final class AUCAppModel {
     public static let openAISetupPromptSeenKey = "auc.didShowOpenAISetupPrompt"
     public static let onboardingCompletedKey = "auc.didCompleteLauncherFirstOnboarding"
+    public static let onboardingCompletedVersionKey = "auc.completedOnboardingVersion"
     public static let openAISetupMessage = "Add your OpenAI key to run tasks."
     public static let defaultOpenAIBaseURL = "https://api.openai.com/v1"
     public static let openAIDemoModelID = "openai/gpt-5.2"
@@ -33,15 +34,21 @@ public final class AUCAppModel {
     public var isOpenAIDemoMode = false
     public var isDemoKeyActive = false
     public var hasSeededDemoKey = false
+    public var demoReleaseVersion = "openai-demo"
     public var authErrorMessage: String?
+    public var executorPhase: AUCExecutorPhase = .starting
+    public var installLocationStatus: AUCInstallLocationStatus?
+    public var executorDiagnostics = AUCExecutorDiagnostics()
 
     private var executor: any ExecutorClientProtocol
     private var eventSource: (any DaemonEventSourceProtocol)?
     @ObservationIgnored private let userDefaults: UserDefaults
+    @ObservationIgnored public var executorRepairHandler: (@MainActor @Sendable () async -> Bool)?
     private let demoExecutor = DemoExecutorClient()
     @ObservationIgnored private var taskMonitors: [String: _Concurrency.Task<Void, Never>] = [:]
     @ObservationIgnored private var eventListenerTask: _Concurrency.Task<Void, Never>?
     @ObservationIgnored private var taskListRefreshTask: _Concurrency.Task<Void, Never>?
+    @ObservationIgnored private var didApplySeededDemoKeyThisSession = false
 
     public init(executor: any ExecutorClientProtocol = DemoExecutorClient(), userDefaults: UserDefaults = .standard) {
         self.executor = executor
@@ -73,12 +80,17 @@ public final class AUCAppModel {
 
     public func connect() async {
         do {
+            if executorPhase != .repairing {
+                executorPhase = .starting
+            }
             try await executor.connect()
+            try await executor.ping()
             if let eventSource {
                 try? await eventSource.connect()
                 startEventListener(from: eventSource)
             }
             isExecutorConnected = true
+            executorPhase = .connected
             errorMessage = nil
             providerSettings = (try? await executor.getProviderSettings()) ?? AUCProviderSettings()
             openAIBaseURL = (try? await executor.getOpenAIBaseURL()) ?? ""
@@ -87,6 +99,9 @@ public final class AUCAppModel {
             startTaskListRefresh()
         } catch {
             isExecutorConnected = false
+            if executorPhase != .installBlocked {
+                executorPhase = .failed
+            }
             errorMessage = error.localizedDescription
             if tasks.isEmpty {
                 tasks = (try? await demoExecutor.listTasks()) ?? []
@@ -127,20 +142,28 @@ public final class AUCAppModel {
         isSavingProviderSettings = false
     }
 
-    public func configureOpenAIDemoMode(seededKeyAvailable: Bool) {
+    public func configureOpenAIDemoMode(seededKeyAvailable: Bool, releaseVersion: String = "openai-demo") {
         isOpenAIDemoMode = true
         hasSeededDemoKey = seededKeyAvailable
+        demoReleaseVersion = releaseVersion
     }
 
     public func applySeededDemoKeyIfNeeded(_ apiKey: String?) async {
         guard isOpenAIDemoMode,
               let apiKey,
-              !apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-              !providerSettings.hasReadyProvider else {
+              !apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             return
         }
+        let trimmedKey = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        let expectedPrefix = String(trimmedKey.prefix(8))
+        let currentKeyPrefix = providerSettings.openAIKeyPrefix ?? ""
+        let shouldApplySeed = !providerSettings.hasReadyProvider ||
+            !currentKeyPrefix.hasPrefix(expectedPrefix) ||
+            !didApplySeededDemoKeyThisSession
+        guard shouldApplySeed else { return }
+        didApplySeededDemoKeyThisSession = true
         await saveOpenAIAPIKey(
-            apiKey,
+            trimmedKey,
             baseURL: Self.defaultOpenAIBaseURL,
             modelID: Self.openAIDemoModelID
         )
@@ -152,6 +175,7 @@ public final class AUCAppModel {
 
     public func completeOnboarding(showLauncher: Bool = true) {
         userDefaults.set(true, forKey: Self.onboardingCompletedKey)
+        userDefaults.set(demoReleaseVersion, forKey: Self.onboardingCompletedVersionKey)
         isOnboardingPresented = false
         isSettingsPresented = false
         if showLauncher {
@@ -165,8 +189,25 @@ public final class AUCAppModel {
         isSettingsPresented = false
     }
 
+    public func blockInstallLocation(_ status: AUCInstallLocationStatus) {
+        installLocationStatus = status
+        executorPhase = .installBlocked
+        isExecutorConnected = false
+        errorMessage = status.message
+        isOnboardingPresented = false
+        isSettingsPresented = false
+        isLauncherPresented = false
+    }
+
+    public func updateExecutorDiagnostics(_ diagnostics: AUCExecutorDiagnostics) {
+        executorDiagnostics = diagnostics
+    }
+
     public func submitComposer(keepLauncherOpen: Bool = false) async {
         guard composer.canSubmit, !isBusy else { return }
+        if !isExecutorConnected || executorPhase == .failed || executorPhase == .crashed {
+            guard await repairExecutor() else { return }
+        }
         guard providerSettings.hasReadyProvider else {
             presentOpenAISetup()
             return
@@ -225,6 +266,10 @@ public final class AUCAppModel {
             monitorTask(id: followUpTaskID ?? task.id)
             await refreshTaskList(selectLatestRunning: false)
         } catch {
+            if isRepairableExecutorError(error) {
+                isExecutorConnected = false
+                executorPhase = error.localizedDescription.localizedCaseInsensitiveContains("crashed") ? .crashed : .failed
+            }
             errorMessage = error.localizedDescription
             if case .followUp(let taskID) = submittedMode {
                 markFollowUpFailed(taskID: taskID, message: error.localizedDescription)
@@ -237,7 +282,7 @@ public final class AUCAppModel {
 
     private func maybePromptForOpenAISetupOnFirstLaunch() {
         if isOpenAIDemoMode {
-            guard !userDefaults.bool(forKey: Self.onboardingCompletedKey) else { return }
+            guard userDefaults.string(forKey: Self.onboardingCompletedVersionKey) != demoReleaseVersion else { return }
             isOnboardingPresented = true
             if !providerSettings.hasReadyProvider {
                 settingsMessage = hasSeededDemoKey ? "Preparing the seeded OpenAI demo key." : Self.openAISetupMessage
@@ -251,9 +296,47 @@ public final class AUCAppModel {
     }
 
     private func presentOpenAISetup() {
+        guard executorPhase.isReadyForProviderSetup else {
+            errorMessage = executorPhase == .repairing ? "AUC is repairing the executor." : "Executor needs repair before provider setup can be checked."
+            return
+        }
         settingsMessage = Self.openAISetupMessage
         errorMessage = nil
         isSettingsPresented = true
+    }
+
+    public func repairExecutor() async -> Bool {
+        guard executorPhase != .installBlocked else { return false }
+        executorPhase = .repairing
+        settingsMessage = "Repairing executor."
+        errorMessage = nil
+        let repaired: Bool
+        if let executorRepairHandler {
+            repaired = await executorRepairHandler()
+        } else {
+            await connect()
+            repaired = isExecutorConnected
+        }
+        if repaired {
+            executorPhase = .connected
+            isExecutorConnected = true
+            settingsMessage = nil
+        } else {
+            executorPhase = .failed
+            isExecutorConnected = false
+            errorMessage = errorMessage ?? "Executor needs repair."
+        }
+        return repaired
+    }
+
+    private func isRepairableExecutorError(_ error: any Error) -> Bool {
+        let message = error.localizedDescription.lowercased()
+        return message.contains("daemon socket") ||
+            message.contains("disconnected") ||
+            message.contains("could not connect") ||
+            message.contains("node runtime crashed") ||
+            message.contains("executor crashed") ||
+            message.contains("request timed out")
     }
 
     public func refreshTaskList(selectLatestRunning: Bool = true) async {

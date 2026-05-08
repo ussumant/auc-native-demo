@@ -1,11 +1,13 @@
 import AUCNativeCore
 import SwiftUI
+import OSLog
 #if canImport(AppKit)
 import AppKit
 #endif
 
 @main
 struct AUCNativeApp: App {
+    private static let logger = Logger(subsystem: "ai.auc.native", category: "bootstrap")
     @State private var appModel = AUCAppModel()
     @State private var processManager = ExecutorProcessManager()
     @State private var launcherPanel = LauncherPanelController()
@@ -24,12 +26,17 @@ struct AUCNativeApp: App {
             MainWindowView(model: appModel)
                 .frame(minWidth: 1100, minHeight: 720)
                 .onAppear {
+                    Self.logger.info("Main window appeared; scheduling bootstrap")
                     #if canImport(AppKit)
                     NSApp.setActivationPolicy(.regular)
                     NSApp.activate(ignoringOtherApps: true)
                     #endif
                     applyDemoConfigOnce()
                     installLauncherHotKeyOnce()
+                    installRepairHandlerOnce()
+                    Task {
+                        await bootstrapOnce()
+                    }
                 }
                 .onChange(of: appModel.isLauncherPresented) { _, isPresented in
                     if isPresented {
@@ -98,7 +105,17 @@ struct AUCNativeApp: App {
         guard !didApplyDemoConfig else { return }
         didApplyDemoConfig = true
         guard demoConfig.isOpenAIDemo else { return }
-        appModel.configureOpenAIDemoMode(seededKeyAvailable: demoConfig.seededOpenAIAPIKey != nil)
+        appModel.configureOpenAIDemoMode(
+            seededKeyAvailable: demoConfig.seededOpenAIAPIKey != nil,
+            releaseVersion: demoConfig.releaseVersion ?? "openai-demo"
+        )
+    }
+
+    @MainActor
+    private func installRepairHandlerOnce() {
+        appModel.executorRepairHandler = {
+            await bootstrap(force: true)
+        }
     }
 
     @MainActor
@@ -114,32 +131,65 @@ struct AUCNativeApp: App {
     private func bootstrapOnce() async {
         guard !didBootstrap else { return }
         didBootstrap = true
+        Self.logger.info("Bootstrap once started")
         applyDemoConfigOnce()
-        await bootstrap(force: false)
+        _ = await bootstrap(force: false)
     }
 
     @MainActor
-    private func bootstrap(force: Bool) async {
+    @discardableResult
+    private func bootstrap(force: Bool) async -> Bool {
+        guard !activateExistingInstanceIfNeeded() else { return false }
         let paths = ExecutorProcessManager.defaultPaths()
+        Self.logger.info("Bootstrap force=\(force) daemonEntry=\(paths.daemonEntry?.path ?? "nil", privacy: .public) node=\(paths.nodeBinary?.path ?? "nil", privacy: .public)")
+        let installStatus = AUCInstallLocationGuard.evaluate(
+            appPath: Bundle.main.bundlePath,
+            isOpenAIDemoMode: demoConfig.isOpenAIDemo
+        )
+        if installStatus.isBlocked {
+            appModel.blockInstallLocation(installStatus)
+            updateDiagnostics(paths: paths, installStatus: installStatus)
+            return false
+        }
+        appModel.executorPhase = force ? .repairing : .starting
+        if force {
+            await processManager.cleanupStaleRuntimeFiles(paths: paths)
+        }
         do {
             try await processManager.ensureRunning(paths: paths)
+            Self.logger.info("ensureRunning completed")
             let socketPath = ExecutorProcessManager.socketPath(for: paths.dataDir)
-            await connectWithRetry(socketPath: socketPath)
-            await appModel.applySeededDemoKeyIfNeeded(demoConfig.seededOpenAIAPIKey)
-        } catch {
-            appModel.isExecutorConnected = false
-            appModel.errorMessage = error.localizedDescription
-            if force {
-                await appModel.connect()
-            } else if appModel.tasks.isEmpty {
-                await appModel.connect()
+            let connected = await connectWithRetry(socketPath: socketPath)
+            guard connected else {
+                let logError = ExecutorProcessManager.latestDaemonLogError(in: paths.dataDir)
+                appModel.executorPhase = logError != nil ? .crashed : .failed
+                appModel.isExecutorConnected = false
+                appModel.errorMessage = logError.map { "The bundled executor crashed before it became ready: \($0)." } ??
+                    "The bundled executor did not become ready in time. Try Repair executor."
+                updateDiagnostics(paths: paths, installStatus: installStatus)
+                return false
             }
+            await appModel.applySeededDemoKeyIfNeeded(demoConfig.seededOpenAIAPIKey)
+            updateDiagnostics(paths: paths, installStatus: installStatus)
+            Self.logger.info("Bootstrap finished connected=\(appModel.isExecutorConnected)")
+            return appModel.isExecutorConnected
+        } catch {
+            Self.logger.error("Bootstrap failed: \(error.localizedDescription, privacy: .public)")
+            appModel.isExecutorConnected = false
+            if case ExecutorProcessError.runtimePreflightFailed = error {
+                appModel.executorPhase = .crashed
+            } else {
+                appModel.executorPhase = .failed
+            }
+            appModel.errorMessage = error.localizedDescription
+            updateDiagnostics(paths: paths, installStatus: installStatus)
+            return false
         }
     }
 
     @MainActor
-    private func connectWithRetry(socketPath: String) async {
-        for _ in 0..<20 {
+    private func connectWithRetry(socketPath: String) async -> Bool {
+        for _ in 0..<60 {
             let transport = UnixSocketTransport(socketPath: socketPath)
             let eventTransport = UnixSocketTransport(socketPath: socketPath)
             appModel.configure(
@@ -149,9 +199,41 @@ struct AUCNativeApp: App {
             await appModel.connect()
             if appModel.isExecutorConnected {
                 await appModel.applySeededDemoKeyIfNeeded(demoConfig.seededOpenAIAPIKey)
-                return
+                return true
             }
-            try? await Task.sleep(for: .milliseconds(200))
+            try? await Task.sleep(for: .milliseconds(500))
         }
+        return false
+    }
+
+    @MainActor
+    private func updateDiagnostics(paths: ExecutorPaths, installStatus: AUCInstallLocationStatus) {
+        let diagnostics = ExecutorProcessManager.diagnostics(
+            paths: paths,
+            appPath: Bundle.main.bundlePath,
+            installStatus: installStatus,
+            isConnected: appModel.isExecutorConnected,
+            executorPhase: appModel.executorPhase,
+            providerReady: appModel.providerSettings.hasReadyProvider,
+            lastError: appModel.errorMessage
+        )
+        appModel.updateExecutorDiagnostics(diagnostics)
+    }
+
+    @MainActor
+    private func activateExistingInstanceIfNeeded() -> Bool {
+        #if canImport(AppKit)
+        guard demoConfig.isOpenAIDemo else { return false }
+        let currentPID = ProcessInfo.processInfo.processIdentifier
+        let existing = NSRunningApplication
+            .runningApplications(withBundleIdentifier: "ai.auc.native")
+            .first { $0.processIdentifier != currentPID }
+        guard let existing else { return false }
+        existing.activate(options: [.activateAllWindows, .activateIgnoringOtherApps])
+        NSApp.terminate(nil)
+        return true
+        #else
+        return false
+        #endif
     }
 }

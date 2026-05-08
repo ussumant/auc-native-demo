@@ -306,6 +306,96 @@ public struct AUCProviderSettings: Codable, Equatable, Sendable {
     }
 }
 
+public enum AUCExecutorPhase: String, Codable, Equatable, Sendable {
+    case installBlocked
+    case starting
+    case connected
+    case repairing
+    case crashed
+    case failed
+
+    public var isReadyForProviderSetup: Bool {
+        self == .connected
+    }
+}
+
+public struct AUCExecutorDiagnostics: Codable, Equatable, Sendable {
+    public var appPath: String
+    public var isRunningFromDMG: Bool
+    public var isTranslocated: Bool
+    public var dataDir: String
+    public var socketPath: String
+    public var daemonPid: Int32?
+    public var nodeBinaryPath: String?
+    public var daemonEntryPath: String?
+    public var logPath: String
+    public var isConnected: Bool
+    public var executorPhase: AUCExecutorPhase
+    public var providerReady: Bool
+    public var lastError: String?
+    public var daemonCommand: String?
+    public var staleDaemonDescription: String?
+    public var lastLogError: String?
+
+    public init(
+        appPath: String = "",
+        isRunningFromDMG: Bool = false,
+        isTranslocated: Bool = false,
+        dataDir: String = "",
+        socketPath: String = "",
+        daemonPid: Int32? = nil,
+        nodeBinaryPath: String? = nil,
+        daemonEntryPath: String? = nil,
+        logPath: String = "",
+        isConnected: Bool = false,
+        executorPhase: AUCExecutorPhase = .starting,
+        providerReady: Bool = false,
+        lastError: String? = nil,
+        daemonCommand: String? = nil,
+        staleDaemonDescription: String? = nil,
+        lastLogError: String? = nil
+    ) {
+        self.appPath = appPath
+        self.isRunningFromDMG = isRunningFromDMG
+        self.isTranslocated = isTranslocated
+        self.dataDir = dataDir
+        self.socketPath = socketPath
+        self.daemonPid = daemonPid
+        self.nodeBinaryPath = nodeBinaryPath
+        self.daemonEntryPath = daemonEntryPath
+        self.logPath = logPath
+        self.isConnected = isConnected
+        self.executorPhase = executorPhase
+        self.providerReady = providerReady
+        self.lastError = lastError
+        self.daemonCommand = daemonCommand
+        self.staleDaemonDescription = staleDaemonDescription
+        self.lastLogError = lastLogError
+    }
+
+    public var copyText: String {
+        [
+            "AUC Executor Diagnostics",
+            "App path: \(appPath.isEmpty ? "unknown" : appPath)",
+            "Running from DMG: \(isRunningFromDMG ? "yes" : "no")",
+            "Translocated: \(isTranslocated ? "yes" : "no")",
+            "Data dir: \(dataDir.isEmpty ? "unknown" : dataDir)",
+            "Socket path: \(socketPath.isEmpty ? "unknown" : socketPath)",
+            "Daemon pid: \(daemonPid.map(String.init) ?? "unknown")",
+            "Node: \(nodeBinaryPath ?? "unknown")",
+            "Daemon entry: \(daemonEntryPath ?? "unknown")",
+            "Daemon log: \(logPath.isEmpty ? "unknown" : logPath)",
+            "Executor phase: \(executorPhase.rawValue)",
+            "Executor connected: \(isConnected ? "yes" : "no")",
+            "Provider ready: \(providerReady ? "yes" : "no")",
+            "Daemon command: \(daemonCommand ?? "unknown")",
+            "Stale daemon: \(staleDaemonDescription ?? "none")",
+            "Last daemon log error: \(lastLogError ?? "none")",
+            "Last error: \(lastError ?? "none")"
+        ].joined(separator: "\n")
+    }
+}
+
 public struct AUCProof: Codable, Equatable, Sendable {
     public var title: String
     public var detail: String
